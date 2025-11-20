@@ -24,6 +24,8 @@ services:
       - "8000:8000"
     depends_on:
       - db
+    env_file:
+      - .env        #currently only adds OPENAI_API_KEY
     environment:
       # You could move these to env vars, but hardcoding in settings.py is fine for dev
       - DJANGO_SETTINGS_MODULE=panion_backend.settings
