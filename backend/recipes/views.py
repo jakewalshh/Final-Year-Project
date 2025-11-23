@@ -99,16 +99,36 @@ def plan_meals(request):
             {"error": "Failed to parse request with OpenAI"},
             status=500,
         )
+    
+    # 3. Extract fields with sane defaults + clamp values (stops crazy query values like insane meal sizes)
 
-    # 3. Extract fields with sane defaults
-    num_meals = int(parsed.get("num_meals", 3) or 3)
-    serves = int(parsed.get("serves", 2) or 2)
+    try:
+        num_meals = int(parsed.get("num_meals", 3) or 3)
+    except (TypeError, ValueError):
+        num_meals = 3
+
+    try:
+        serves = int(parsed.get("serves", 2) or 2)
+    except (TypeError, ValueError):
+        serves = 2
+
     ingredient_keyword = (parsed.get("ingredient_keyword") or "").strip().lower()
 
     if not ingredient_keyword:
         ingredient_keyword = "chicken"  # fallback
 
-    # 4. Query recipes based on ingredient keyword (and optionally serves)
+    # Clamp to sane ranges
+    if num_meals < 1:
+        num_meals = 1
+    if num_meals > 10:
+        num_meals = 10
+
+    if serves < 1:
+        serves = 1
+    if serves > 10:
+        serves = 10
+
+    # 4. Query recipes based on ingredient keyword (and serves)
     recipes_qs = Recipe.objects.filter(
         ingredients__icontains=ingredient_keyword,
         serves=serves,
@@ -125,6 +145,8 @@ def plan_meals(request):
         for r in recipes_qs
     ]
 
+    no_results = len(recipes_data) == 0
+
     # 5. Return both the parsed query info and the recipes
     return JsonResponse(
         {
@@ -133,6 +155,7 @@ def plan_meals(request):
                 "serves": serves,
                 "ingredient_keyword": ingredient_keyword,
             },
+            "no_results": no_results,
             "recipes": recipes_data,
         }
     )

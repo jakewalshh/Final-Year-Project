@@ -4,9 +4,11 @@ const PLAN_MEALS_URL = "http://localhost:8000/api/plan-meals/";
 
 function App() {
   const [userPrompt, setUserPrompt] = useState(
-    "Create 3 meals to feed two people. I want chicken to be in them, there are no alergies"
+    "Create 3 meals to feed two people. I want chicken as the meat, there are no alergies"
   );
   const [recipes, setRecipes] = useState([]);
+  const [parsedQuery, setParsedQuery] = useState(null);
+  const [noResults, setNoResults] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const handleSubmit = async (event) => {
@@ -14,6 +16,8 @@ function App() {
     setLoading(true);
     setError("");
     setRecipes([]);
+    setParsedQuery(null);
+    setNoResults(false); 
 
     try {
       const response = await fetch(PLAN_MEALS_URL, {
@@ -34,6 +38,9 @@ function App() {
 
       // Expecting { query: {...}, recipes: [...] }
       setRecipes(data.recipes || []);
+      setParsedQuery(data.query || null);
+      setNoResults(Boolean(data.no_results));
+
     } catch (err) {
       console.error(err);
       setError("Something went wrong generating the meal plan. Check the backend logs.");
@@ -69,11 +76,32 @@ function App() {
 
         {error && <p style={styles.error}>{error}</p>}
 
+        {parsedQuery && (
+          <div style={styles.querySummary}>
+            <h2 style={styles.resultsTitle}>Parsed Request</h2>
+            <p style={styles.queryText}>
+              <strong>Meals:</strong> {parsedQuery.num_meals} &nbsp;|&nbsp;
+              <strong>Serves per meal:</strong> {parsedQuery.serves} &nbsp;|&nbsp;
+              <strong>Main ingredient:</strong> {parsedQuery.ingredient_keyword}
+            </p>
+          </div>
+        )}
+
         <div style={styles.results}>
           <h2 style={styles.resultsTitle}>Recipes</h2>
-          {recipes.length === 0 && !loading && (
-            <p style={styles.noResults}>No recipes yet. Try generating a plan.</p>
+
+          {recipes.length === 0 && !loading && !noResults && (
+            <p style={styles.noResults}>
+              No recipes yet. Try generating a plan.
+            </p>
           )}
+
+          {noResults && !loading && (
+            <p style={styles.noResults}>
+              No recipes found for this request. Try changing the main ingredient or serves.
+            </p>
+          )}
+
 
           {recipes.map((recipe) => (
             <div key={recipe.id} style={styles.recipeCard}>
@@ -188,6 +216,21 @@ const styles = {
     marginBottom: "4px",
     fontSize: "18px",
   },
+  querySummary: {
+    marginTop: "12px",
+    marginBottom: "12px",
+    padding: "10px 12px",
+    borderRadius: "12px",
+    backgroundColor: "#020617",
+    border: "1px solid #1f2937",
+  },
+  queryText: {
+    margin: 0,
+    fontSize: "14px",
+    color: "#9ca3af",
+  },
+
+
 };
 
 export default App;
