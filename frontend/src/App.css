@@ -1,38 +1,121 @@
-.App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
+.page {
   min-height: 100vh;
+  margin: 0;
+  padding: 20px;
+  background-color: #0f172a;
+  color: #e5e7eb;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.card {
+  max-width: 800px;
+  width: 100%;
+  background-color: #020617;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.8);
+  border: 1px solid #1f2937;
+}
+
+.title {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+.subtitle {
+  margin: 0 0 20px;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.form {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
-.App-link {
-  color: #61dafb;
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.textarea {
+  min-height: 80px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #4b5563;
+  background-color: #020617;
+  color: #e5e7eb;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.button {
+  margin-top: 4px;
+  padding: 10px 16px;
+  border-radius: 9999px;
+  border: none;
+  background-color: #22c55e;
+  color: #022c22;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.error {
+  color: #fca5a5;
+  margin-top: 8px;
+}
+
+.results {
+  margin-top: 16px;
+}
+
+.results-title {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.no-results {
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.recipe-card {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background-color: #020617;
+  border: 1px solid #1f2937;
+}
+
+.recipe-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.query-summary {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background-color: #020617;
+  border: 1px solid #1f2937;
+}
+
+.query-text {
+  margin: 0;
+  font-size: 14px;
+  color: #9ca3af;
 }

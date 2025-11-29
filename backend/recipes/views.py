@@ -63,7 +63,7 @@ def plan_meals(request):
     # 2. Call OpenAI to parse the prompt into structured JSON
     try:
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",  # cheaper, fast model is fine for parsing
+            model="gpt-4o-mini",  # cheap + fast model for parsing
             response_format={"type": "json_object"},
             messages=[
                 {
