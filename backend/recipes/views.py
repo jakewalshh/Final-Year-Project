@@ -42,7 +42,7 @@ def plan_meals(request):
     - Sends the prompt to OpenAI to extract:
         - num_meals (int)
         - serves (int)
-        - ingredient_keyword (string, e.g. "chicken")
+        - ingredient_keyword (string, e.g. "beef")
     - Uses that info to query Recipe objects.
     - Returns JSON: { "query": {..parsed..}, "recipes": [...] }
     """
@@ -82,7 +82,7 @@ def plan_meals(request):
                         "- serves: how many people each meal should feed (integer)\n"
                         "- ingredient_keyword: a single keyword for the main protein or key ingredient "
                         "(e.g. 'chicken', 'beef', 'tofu'). "
-                        "If none is specified, guess something reasonable.\n\n"
+                        "If none is specified, leave blank.\n\n"
                         f"User request: {user_prompt}"
                     ),
                 },

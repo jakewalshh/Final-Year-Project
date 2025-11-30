@@ -1,0 +1,20 @@
+Recipe.objects.create(
+    name="Simple Chicken Pasta",
+    serves=2,
+    ingredients="chicken, pasta, tomato sauce, garlic, olive oil, salt, pepper",
+    instructions="Boil pasta. Season and cook chicken in a pan with garlic. Add tomato sauce, simmer, then toss with pasta."
+)
+
+Recipe.objects.create(
+    name="Chicken Stir Fry",
+    serves=2,
+    ingredients="chicken, mixed vegetables, soy sauce, ginger, garlic, rice",
+    instructions="Stir fry chicken until browned. Add vegetables, soy sauce, ginger, and garlic. Serve over cooked rice."
+)
+
+Recipe.objects.create(
+    name="Baked Lemon Chicken",
+    serves=2,
+    ingredients="chicken breasts, lemon, olive oil, garlic, herbs, potatoes",
+    instructions="Place chicken and chopped potatoes in a tray. Add lemon juice, olive oil, garlic, and herbs. Bake until cooked through."
+)
