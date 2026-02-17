@@ -56,8 +56,7 @@ function App() {
       <div className="card">
         <h1 className="title">Panion Prototype</h1>
         <p className="subtitle">
-          Enter a meal planning request below. For now, the app will always
-          return 3 chicken recipes from the database.
+          Enter a meal planning request below to query your recipe database.
         </p>
 
         <form onSubmit={handleSubmit} className="form">
@@ -109,11 +108,23 @@ function App() {
                 <strong>Serves:</strong> {recipe.serves}
               </p>
               <p>
-                <strong>Ingredients:</strong> {recipe.ingredients}
+                <strong>Ingredients:</strong>{" "}
+                {Array.isArray(recipe.ingredients)
+                  ? recipe.ingredients.join(", ")
+                  : recipe.ingredients}
               </p>
-              <p>
-                <strong>Instructions:</strong> {recipe.instructions}
-              </p>
+              <div>
+                <strong>Instructions:</strong>
+                {Array.isArray(recipe.instructions) ? (
+                  <ol>
+                    {recipe.instructions.map((step, index) => (
+                      <li key={`${recipe.id}-step-${index}`}>{step}</li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p>{recipe.instructions}</p>
+                )}
+              </div>
             </div>
           ))}
         </div>
