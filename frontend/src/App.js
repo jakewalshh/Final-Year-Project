@@ -12,6 +12,14 @@ function App() {
   const [noResults, setNoResults] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showNutrition, setShowNutrition] = useState(false);
+
+  const formatNutritionValue = (value) => {
+    if (value === null || value === undefined) return "N/A";
+    if (typeof value === "number") return Number.isInteger(value) ? value : value.toFixed(1);
+    return value;
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -72,6 +80,14 @@ function App() {
           <button type="submit" className="button" disabled={loading}>
             {loading ? "Generating..." : "Generate Meal Plan"}
           </button>
+
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setShowNutrition((prev) => !prev)}
+          >
+            {showNutrition ? "Hide Nutrition" : "Show Nutrition"}
+          </button>
         </form>
 
         {error && <p className="error">{error}</p>}
@@ -125,6 +141,21 @@ function App() {
                   <p>{recipe.instructions}</p>
                 )}
               </div>
+
+              {showNutrition && recipe.nutrition && (
+                <div className="nutrition-panel">
+                  <strong>Nutrition (per recipe):</strong>
+                  <ul>
+                    <li>Calories: {formatNutritionValue(recipe.nutrition.calories)}</li>
+                    <li>Total Fat (%DV): {formatNutritionValue(recipe.nutrition.total_fat_pdv)}</li>
+                    <li>Sugar (%DV): {formatNutritionValue(recipe.nutrition.sugar_pdv)}</li>
+                    <li>Sodium (%DV): {formatNutritionValue(recipe.nutrition.sodium_pdv)}</li>
+                    <li>Protein (%DV): {formatNutritionValue(recipe.nutrition.protein_pdv)}</li>
+                    <li>Saturated Fat (%DV): {formatNutritionValue(recipe.nutrition.saturated_fat_pdv)}</li>
+                    <li>Carbohydrates (%DV): {formatNutritionValue(recipe.nutrition.carbohydrates_pdv)}</li>
+                  </ul>
+                </div>
+              )}
             </div>
           ))}
         </div>
