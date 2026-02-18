@@ -38,11 +38,23 @@
   margin-bottom: 20px;
 }
 
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .label {
   display: flex;
   flex-direction: column;
   gap: 8px;
   font-size: 14px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .textarea {
@@ -53,6 +65,16 @@
   background-color: #020617;
   color: #e5e7eb;
   resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.input {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #4b5563;
+  background-color: #020617;
+  color: #e5e7eb;
   font-family: inherit;
   font-size: 14px;
 }
@@ -77,6 +99,11 @@
 .button.secondary {
   background-color: #334155;
   color: #e5e7eb;
+}
+
+.active-mode {
+  background-color: #0ea5e9;
+  color: #082f49;
 }
 
 .error {
@@ -136,4 +163,14 @@
 .nutrition-panel ul {
   margin: 8px 0 0;
   padding-left: 20px;
+}
+
+@media (max-width: 700px) {
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-switch {
+    flex-direction: column;
+  }
 }
