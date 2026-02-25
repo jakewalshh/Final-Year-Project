@@ -250,7 +250,23 @@ function App() {
             <h2 className="results-title">Parsed Request</h2>
             <p className="query-text">
               <strong>Meals:</strong> {parsedQuery.num_meals} &nbsp;|&nbsp;
-              <strong>Main ingredient:</strong> {parsedQuery.ingredient_keyword}
+              <strong>Main ingredient:</strong>{" "}
+              {parsedQuery.ingredient_keyword || "not specified"} &nbsp;|&nbsp;
+              <strong>Include tags:</strong>{" "}
+              {Array.isArray(parsedQuery.include_tags) && parsedQuery.include_tags.length > 0
+                ? parsedQuery.include_tags.join(", ")
+                : "none"}
+            </p>
+            <p className="query-text">
+              <strong>Exclude ingredients:</strong>{" "}
+              {Array.isArray(parsedQuery.exclude_ingredients) &&
+              parsedQuery.exclude_ingredients.length > 0
+                ? parsedQuery.exclude_ingredients.join(", ")
+                : "none"}
+              &nbsp;|&nbsp;
+              <strong>Max minutes:</strong> {parsedQuery.max_minutes ?? "none"}
+              &nbsp;|&nbsp;
+              <strong>Parser:</strong> {parsedQuery.parser_source || "rules"}
             </p>
           </div>
         )}

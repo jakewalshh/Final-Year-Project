@@ -1,84 +1,16 @@
 import json
 import os
-import re
 
 from django.db.models import Prefetch, Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Ingredient, Recipe, RecipeIngredient, RecipeStep, RecipeTag
+from .models import Recipe, RecipeIngredient, RecipeStep, RecipeTag
+from .planning import build_plan_queryset, parse_prompt_to_query
 
 from openai import OpenAI
 
 # Creating OpenAI client
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "any",
-    "are",
-    "as",
-    "at",
-    "be",
-    "create",
-    "feed",
-    "for",
-    "from",
-    "i",
-    "in",
-    "is",
-    "it",
-    "main",
-    "meal",
-    "meals",
-    "my",
-    "no",
-    "of",
-    "on",
-    "or",
-    "people",
-    "person",
-    "please",
-    "recipe",
-    "recipes",
-    "that",
-    "the",
-    "there",
-    "to",
-    "want",
-    "with",
-    "without",
-    "allergy",
-    "allergies",
-}
-
-NUMBER_WORDS = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
-
-COMMON_INGREDIENT_FALLBACKS = {
-    "chicken",
-    "beef",
-    "pork",
-    "tofu",
-    "salmon",
-    "turkey",
-    "lamb",
-    "shrimp",
-    "fish",
-    "rice",
-    "pasta",
-}
 
 
 def _to_int(value, default):
@@ -94,76 +26,6 @@ def _clamp(value, minimum, maximum):
     if value > maximum:
         return maximum
     return value
-
-
-def _prompt_tokens(prompt):
-    return [token.lower() for token in re.findall(r"[a-zA-Z0-9']+", prompt)]
-
-
-def _token_to_int(token):
-    if token is None:
-        return None
-    if token.isdigit():
-        try:
-            return int(token)
-        except ValueError:
-            return None
-    return NUMBER_WORDS.get(token.lower())
-
-
-def _extract_num_meals(prompt, default=3):
-    tokens = _prompt_tokens(prompt)
-    for index in range(len(tokens) - 1):
-        number = _token_to_int(tokens[index])
-        if number is None:
-            continue
-        if tokens[index + 1].startswith(("meal", "recipe", "dish")):
-            return number
-    return default
-
-
-def _extract_ingredient_keyword(prompt):
-    tokens = _prompt_tokens(prompt)
-    if not tokens:
-        return ""
-
-    candidates = []
-    for n in (3, 2, 1):
-        for idx in range(len(tokens) - n + 1):
-            phrase = " ".join(tokens[idx : idx + n]).strip()
-            if not phrase:
-                continue
-            phrase_parts = phrase.split()
-            if all(part in STOPWORDS for part in phrase_parts):
-                continue
-            candidates.append(phrase)
-
-    # Remove duplicates while preserving order.
-    seen = set()
-    ordered_candidates = []
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        ordered_candidates.append(candidate)
-
-    if ordered_candidates:
-        existing = set(
-            Ingredient.objects.filter(name__in=ordered_candidates).values_list("name", flat=True)
-        )
-        for candidate in ordered_candidates:
-            if candidate in existing:
-                return candidate
-
-    for token in tokens:
-        if token in COMMON_INGREDIENT_FALLBACKS:
-            return token
-
-    for token in reversed(tokens):
-        if token not in STOPWORDS:
-            return token
-
-    return ""
 
 
 def _base_queryset():
@@ -275,10 +137,8 @@ def plan_meals(request):
     """
     Endpoint:
     - Accepts POST with JSON body: { "user_prompt": "..." }
-    - Sends the prompt to OpenAI to extract:
-        - num_meals (int)
-        - ingredient_keyword (string, e.g. "beef")
-    - Uses that info to query Recipe objects.
+    - Parses structured query constraints from prompt.
+    - Uses parsed dataset-backed variables to query Recipe objects.
     - Returns JSON: { "query": {..parsed..}, "recipes": [...] }
     """
     if request.method != "POST":
@@ -295,78 +155,27 @@ def plan_meals(request):
     if not user_prompt:
         return JsonResponse({"error": "user_prompt is required"}, status=400)
 
-    # 2. Call OpenAI to parse the prompt into structured JSON
-    parsed = {}
     use_openai_parser = os.environ.get("USE_OPENAI_PARSER", "0") == "1"
-    if use_openai_parser and os.environ.get("OPENAI_API_KEY"):
-        try:
-            completion = client.chat.completions.create(
-                model="gpt-4o-mini",
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a meal planning parser. "
-                            "Extract the requested fields from user prompts. "
-                            "ALWAYS respond with a single JSON object only."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            "Extract these fields from the request:\n"
-                            "- num_meals: integer\n"
-                            "- ingredient_keyword: single keyword ingredient. "
-                            "If missing, return blank string.\n\n"
-                            f"User request: {user_prompt}"
-                        ),
-                    },
-                ],
-            )
-            raw_content = completion.choices[0].message.content
-            parsed = json.loads(raw_content)
-        except Exception as e:
-            print("OpenAI error:", repr(e))
-
-    # 3. Extract fields with defaults + clamp values.
-    parsed_num_meals = _to_int(parsed.get("num_meals"), None)
-    if parsed_num_meals is None:
-        parsed_num_meals = _extract_num_meals(user_prompt, default=3)
-    num_meals = _clamp(parsed_num_meals, 1, 10)
-
-    ingredient_keyword = (parsed.get("ingredient_keyword") or "").strip().lower()
-    if ingredient_keyword in STOPWORDS:
-        ingredient_keyword = ""
-
-    # Fallback parser if OpenAI is unavailable or omitted an ingredient.
-    if not ingredient_keyword:
-        ingredient_keyword = _extract_ingredient_keyword(user_prompt)
-
-    if not ingredient_keyword:
-        ingredient_keyword = "chicken"
-
-    # 4. Query recipes by normalized ingredient relationship.
-    recipes_qs = (
-        _base_queryset()
-        .filter(
-            Q(recipe_ingredients__ingredient__name__icontains=ingredient_keyword)
-            | Q(ingredients__icontains=ingredient_keyword)
-        )
-        .distinct()
+    parsed_query = parse_prompt_to_query(
+        user_prompt=user_prompt,
+        use_openai_parser=use_openai_parser and bool(os.environ.get("OPENAI_API_KEY")),
+        openai_client=client,
     )
 
-    recipes_qs = recipes_qs[:num_meals]
+    recipes_qs = build_plan_queryset(_base_queryset(), parsed_query)
+    recipes_qs = recipes_qs[: parsed_query["num_meals"]]
     recipes_data = [_serialize_recipe(recipe) for recipe in recipes_qs]
 
     no_results = len(recipes_data) == 0
 
-    # 5. Return both the parsed query info and the recipes
+    primary_ingredient = parsed_query["ingredient_keywords"][0] if parsed_query["ingredient_keywords"] else ""
+
+    # Return parsed query + compatibility alias for legacy frontend expectations.
     return JsonResponse(
         {
             "query": {
-                "num_meals": num_meals,
-                "ingredient_keyword": ingredient_keyword,
+                **parsed_query,
+                "ingredient_keyword": primary_ingredient,
             },
             "no_results": no_results,
             "recipes": recipes_data,
