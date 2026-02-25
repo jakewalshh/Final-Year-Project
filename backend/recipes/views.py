@@ -155,7 +155,7 @@ def plan_meals(request):
     if not user_prompt:
         return JsonResponse({"error": "user_prompt is required"}, status=400)
 
-    use_openai_parser = os.environ.get("USE_OPENAI_PARSER", "0") == "1"
+    use_openai_parser = os.environ.get("USE_OPENAI_PARSER", "1") == "1"
     parsed_query = parse_prompt_to_query(
         user_prompt=user_prompt,
         use_openai_parser=use_openai_parser and bool(os.environ.get("OPENAI_API_KEY")),

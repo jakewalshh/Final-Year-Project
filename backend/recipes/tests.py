@@ -28,11 +28,23 @@ class RecipeApiTests(TestCase):
             protein_pdv=14.0,
             carbohydrates_pdv=9.0,
         )
+        self.seed_recipe = Recipe.objects.create(
+            name="Seed Crunch Salad",
+            ingredients="tofu, sunflower seeds, spinach",
+            instructions="Mix ingredients\nServe",
+            minutes=10,
+            description="Vegetarian salad with seeds",
+            external_id=88888,
+            calories=320.0,
+            protein_pdv=11.0,
+            carbohydrates_pdv=10.0,
+        )
 
         ingredient_chicken = Ingredient.objects.create(name="chicken")
         ingredient_pasta = Ingredient.objects.create(name="pasta")
         ingredient_tofu = Ingredient.objects.create(name="tofu")
         ingredient_broccoli = Ingredient.objects.create(name="broccoli")
+        ingredient_seeds = Ingredient.objects.create(name="sunflower seeds")
         tag_quick = Tag.objects.create(name="30-minutes-or-less")
         tag_vegetarian = Tag.objects.create(name="vegetarian")
 
@@ -56,6 +68,16 @@ class RecipeApiTests(TestCase):
             ingredient=ingredient_broccoli,
             position=2,
         )
+        RecipeIngredient.objects.create(
+            recipe=self.seed_recipe,
+            ingredient=ingredient_tofu,
+            position=1,
+        )
+        RecipeIngredient.objects.create(
+            recipe=self.seed_recipe,
+            ingredient=ingredient_seeds,
+            position=2,
+        )
         RecipeStep.objects.create(
             recipe=self.chicken_recipe,
             step_number=1,
@@ -71,9 +93,16 @@ class RecipeApiTests(TestCase):
             step_number=1,
             instruction="Chop vegetables",
         )
+        RecipeStep.objects.create(
+            recipe=self.seed_recipe,
+            step_number=1,
+            instruction="Mix all ingredients",
+        )
         RecipeTag.objects.create(recipe=self.chicken_recipe, tag=tag_quick)
         RecipeTag.objects.create(recipe=self.veg_recipe, tag=tag_quick)
         RecipeTag.objects.create(recipe=self.veg_recipe, tag=tag_vegetarian)
+        RecipeTag.objects.create(recipe=self.seed_recipe, tag=tag_quick)
+        RecipeTag.objects.create(recipe=self.seed_recipe, tag=tag_vegetarian)
 
     def test_search_recipes_by_ingredient(self):
         response = self.client.get(reverse("search-recipes"), {"ingredient": "chicken"})
@@ -163,3 +192,32 @@ class RecipeApiTests(TestCase):
         self.assertIn("vegetarian", data["query"]["include_tags"])
         recipe_names = [recipe["name"] for recipe in data["recipes"]]
         self.assertIn("Quick Veg Stir Fry", recipe_names)
+
+    def test_plan_meals_exclude_seed(self):
+        response = self.client.post(
+            reverse("plan-meals"),
+            data='{"user_prompt": "make me 4 vegetarian meals, exclude seed"}',
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertIn("vegetarian", data["query"]["include_tags"])
+        self.assertIn("seed", data["query"]["exclude_ingredients"])
+        recipe_names = [recipe["name"] for recipe in data["recipes"]]
+        self.assertNotIn("Seed Crunch Salad", recipe_names)
+
+    def test_plan_meals_allergic_to_fish_does_not_set_fish_include(self):
+        response = self.client.post(
+            reverse("plan-meals"),
+            data='{"user_prompt": "make me 4 vegetarian meals, i am extremely allergic to fish"}',
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        query = data["query"]
+        self.assertIn("vegetarian", query["include_tags"])
+        self.assertIn("fish", query["exclude_ingredients"])
+        self.assertNotIn("fish", query["ingredient_keywords"])
+        self.assertNotEqual(query["ingredient_keyword"], "fish")

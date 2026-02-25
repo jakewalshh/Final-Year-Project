@@ -79,6 +79,8 @@ COMMON_INGREDIENT_FALLBACKS = {
 }
 
 NEGATION_TOKENS = {"no", "without", "exclude", "excluding", "avoid"}
+ALLERGY_TOKENS = {"allergy", "allergies", "allergic"}
+ALLERGY_FILLER_TOKENS = {"to", "against", "with", "from", "i", "am", "very", "really", "extremely"}
 
 TOKEN_ALIASES = {
     "vegeterian": "vegetarian",
@@ -165,6 +167,14 @@ def _normalize_item_list(value: Any) -> list[str]:
     return normalized
 
 
+def _terms_conflict(a: str, b: str) -> bool:
+    left = a.strip().lower()
+    right = b.strip().lower()
+    if not left or not right:
+        return False
+    return left == right or left in right or right in left
+
+
 def _extract_numeric_constraint(prompt: str, key_terms: tuple[str, ...]) -> float | None:
     lower_prompt = prompt.lower()
     for term in key_terms:
@@ -224,10 +234,35 @@ def _infer_exclusions(tokens: list[str], *, ingredient_lookup: set[str], tag_loo
             phrase = " ".join(tokens[i + 1 : i + 1 + span]).strip()
             if not phrase:
                 continue
+            if phrase in STOPWORDS:
+                continue
 
             tag_variant = phrase.replace(" ", "-")
-            if phrase in ingredient_lookup:
-                excluded_ingredients.append(phrase)
+            # Ingredient exclusions should work even for partial terms like "seed".
+            excluded_ingredients.append(phrase)
+            if tag_variant in tag_lookup:
+                excluded_tags.append(tag_variant)
+
+    # Allergy phrasing should always be treated as exclusions.
+    # Examples: "allergic to fish", "allergy to nuts", "allergies with dairy".
+    for i, token in enumerate(tokens):
+        if token not in ALLERGY_TOKENS:
+            continue
+
+        start = i + 1
+        while start < len(tokens) and tokens[start] in ALLERGY_FILLER_TOKENS:
+            start += 1
+
+        for span in (3, 2, 1):
+            end = start + span
+            if end > len(tokens):
+                continue
+            phrase = " ".join(tokens[start:end]).strip()
+            if not phrase or phrase in STOPWORDS:
+                continue
+
+            tag_variant = phrase.replace(" ", "-")
+            excluded_ingredients.append(phrase)
             if tag_variant in tag_lookup:
                 excluded_tags.append(tag_variant)
 
@@ -277,6 +312,18 @@ def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
 
     parser_source = str(raw_query.get("parser_source") or "rules")
     parsed["parser_source"] = parser_source if parser_source in {"rules", "openai"} else "rules"
+
+    # Resolve include/exclude conflicts defensively.
+    parsed["ingredient_keywords"] = [
+        ingredient
+        for ingredient in parsed["ingredient_keywords"]
+        if not any(_terms_conflict(ingredient, excluded) for excluded in parsed["exclude_ingredients"])
+    ]
+    parsed["include_tags"] = [
+        tag
+        for tag in parsed["include_tags"]
+        if not any(_terms_conflict(tag, excluded_tag) for excluded_tag in parsed["exclude_tags"])
+    ]
 
     return parsed
 
