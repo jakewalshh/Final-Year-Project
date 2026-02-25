@@ -85,5 +85,4 @@ class RecipeApiTests(TestCase):
 
         data = response.json()
         self.assertEqual(data["query"]["num_meals"], 3)
-        self.assertEqual(data["query"]["serves"], 2)
         self.assertEqual(data["query"]["ingredient_keyword"], "chicken")

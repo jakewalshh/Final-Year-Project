@@ -250,7 +250,6 @@ function App() {
             <h2 className="results-title">Parsed Request</h2>
             <p className="query-text">
               <strong>Meals:</strong> {parsedQuery.num_meals} &nbsp;|&nbsp;
-              <strong>Serves per meal:</strong> {parsedQuery.serves} &nbsp;|&nbsp;
               <strong>Main ingredient:</strong> {parsedQuery.ingredient_keyword}
             </p>
           </div>
@@ -285,7 +284,7 @@ function App() {
 
           {noResults && !loading && (
             <p className="no-results">
-              No recipes found for this request. Try changing the main ingredient or serves.
+              No recipes found for this request. Try changing the main ingredient.
             </p>
           )}
 
@@ -293,9 +292,6 @@ function App() {
           {recipes.map((recipe) => (
             <div key={recipe.id} className="recipe-card">
               <h3 className="recipe-title">{recipe.name}</h3>
-              <p>
-                <strong>Serves:</strong> {recipe.serves}
-              </p>
               <p>
                 <strong>Ingredients:</strong>{" "}
                 {Array.isArray(recipe.ingredients)

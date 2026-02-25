@@ -42,10 +42,6 @@ STOPWORDS = {
     "please",
     "recipe",
     "recipes",
-    "serve",
-    "serves",
-    "serving",
-    "servings",
     "that",
     "the",
     "there",
@@ -123,24 +119,6 @@ def _extract_num_meals(prompt, default=3):
             continue
         if tokens[index + 1].startswith(("meal", "recipe", "dish")):
             return number
-    return default
-
-
-def _extract_serves(prompt, default=2):
-    tokens = _prompt_tokens(prompt)
-    for index in range(len(tokens) - 1):
-        number = _token_to_int(tokens[index])
-        if number is None:
-            continue
-        next_token = tokens[index + 1]
-        if next_token in {"people", "person", "servings"}:
-            return number
-
-    for index in range(len(tokens) - 1):
-        if tokens[index] in {"for", "feed", "serves", "serve", "serving", "servings"}:
-            number = _token_to_int(tokens[index + 1])
-            if number is not None:
-                return number
     return default
 
 
@@ -255,7 +233,6 @@ def _serialize_recipe(recipe, include_steps=True):
         "name": recipe.name,
         "description": recipe.description,
         "minutes": recipe.minutes,
-        "serves": recipe.serves,
         "n_ingredients": recipe.n_ingredients,
         "n_steps": recipe.n_steps,
         "ingredients": ingredients,
@@ -300,7 +277,6 @@ def plan_meals(request):
     - Accepts POST with JSON body: { "user_prompt": "..." }
     - Sends the prompt to OpenAI to extract:
         - num_meals (int)
-        - serves (int)
         - ingredient_keyword (string, e.g. "beef")
     - Uses that info to query Recipe objects.
     - Returns JSON: { "query": {..parsed..}, "recipes": [...] }
@@ -341,7 +317,6 @@ def plan_meals(request):
                         "content": (
                             "Extract these fields from the request:\n"
                             "- num_meals: integer\n"
-                            "- serves: integer\n"
                             "- ingredient_keyword: single keyword ingredient. "
                             "If missing, return blank string.\n\n"
                             f"User request: {user_prompt}"
@@ -359,11 +334,6 @@ def plan_meals(request):
     if parsed_num_meals is None:
         parsed_num_meals = _extract_num_meals(user_prompt, default=3)
     num_meals = _clamp(parsed_num_meals, 1, 10)
-
-    parsed_serves = _to_int(parsed.get("serves"), None)
-    if parsed_serves is None:
-        parsed_serves = _extract_serves(user_prompt, default=2)
-    serves = _clamp(parsed_serves, 1, 10)
 
     ingredient_keyword = (parsed.get("ingredient_keyword") or "").strip().lower()
     if ingredient_keyword in STOPWORDS:
@@ -386,10 +356,6 @@ def plan_meals(request):
         .distinct()
     )
 
-    serves_matches = recipes_qs.filter(serves=serves)
-    if serves_matches.exists():
-        recipes_qs = serves_matches
-
     recipes_qs = recipes_qs[:num_meals]
     recipes_data = [_serialize_recipe(recipe) for recipe in recipes_qs]
 
@@ -400,7 +366,6 @@ def plan_meals(request):
         {
             "query": {
                 "num_meals": num_meals,
-                "serves": serves,
                 "ingredient_keyword": ingredient_keyword,
             },
             "no_results": no_results,

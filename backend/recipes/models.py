@@ -4,7 +4,6 @@ from django.db import models
 class Recipe(models.Model):
     # Legacy fields kept so the current frontend continues to work.
     name = models.CharField(max_length=200, db_index=True)
-    serves = models.IntegerField(null=True, blank=True, db_index=True)
     ingredients = models.TextField(blank=True, default="")
     instructions = models.TextField(blank=True, default="")
 
