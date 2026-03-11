@@ -1,0 +1,29 @@
+from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
+
+from .views import (
+    GenerateMealPlanView,
+    LoginView,
+    MealPlanDetailView,
+    MealPlanListView,
+    MeView,
+    PreferenceView,
+    RegisterView,
+    ShoppingListView,
+    SwapMealView,
+)
+
+urlpatterns = [
+    path("auth/register/", RegisterView.as_view(), name="auth-register"),
+    path("auth/login/", LoginView.as_view(), name="auth-login"),
+    path("auth/refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
+    path("auth/me/", MeView.as_view(), name="auth-me"),
+
+    path("preferences/", PreferenceView.as_view(), name="preferences"),
+
+    path("meal-plans/generate/", GenerateMealPlanView.as_view(), name="meal-plan-generate"),
+    path("meal-plans/", MealPlanListView.as_view(), name="meal-plan-list"),
+    path("meal-plans/<int:plan_id>/", MealPlanDetailView.as_view(), name="meal-plan-detail"),
+    path("meal-plans/<int:plan_id>/swap/", SwapMealView.as_view(), name="meal-plan-swap"),
+    path("meal-plans/<int:plan_id>/shopping-list/", ShoppingListView.as_view(), name="shopping-list"),
+]

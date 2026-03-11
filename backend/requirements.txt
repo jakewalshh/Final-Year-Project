@@ -1,5 +1,9 @@
 django
 djangorestframework
+djangorestframework-simplejwt
 django-cors-headers
 openai
 psycopg2-binary
+dj-database-url
+gunicorn
+whitenoise

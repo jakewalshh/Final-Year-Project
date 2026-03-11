@@ -292,11 +292,13 @@ def _default_query() -> dict[str, Any]:
         "search_text": "",
         "exclude_ingredients": [],
         "parser_source": "rules",
+        "parser_warnings": [],
     }
 
 
 def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
     parsed = _default_query()
+    warnings = []
 
     parsed["num_meals"] = _clamp(_to_int(raw_query.get("num_meals"), 3) or 3, 1, 10)
     parsed["ingredient_keywords"] = _normalize_item_list(raw_query.get("ingredient_keywords"))
@@ -314,16 +316,40 @@ def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
     parsed["parser_source"] = parser_source if parser_source in {"rules", "openai"} else "rules"
 
     # Resolve include/exclude conflicts defensively.
+    conflicting_ingredients = []
     parsed["ingredient_keywords"] = [
         ingredient
         for ingredient in parsed["ingredient_keywords"]
-        if not any(_terms_conflict(ingredient, excluded) for excluded in parsed["exclude_ingredients"])
+        if not any(
+            (_terms_conflict(ingredient, excluded) and conflicting_ingredients.append(ingredient) is None)
+            for excluded in parsed["exclude_ingredients"]
+        )
     ]
+    if conflicting_ingredients:
+        warnings.append(
+            "Removed conflicting include ingredients due to exclusions: "
+            + ", ".join(sorted(set(conflicting_ingredients)))
+        )
+
+    conflicting_tags = []
     parsed["include_tags"] = [
         tag
         for tag in parsed["include_tags"]
-        if not any(_terms_conflict(tag, excluded_tag) for excluded_tag in parsed["exclude_tags"])
+        if not any(
+            (_terms_conflict(tag, excluded_tag) and conflicting_tags.append(tag) is None)
+            for excluded_tag in parsed["exclude_tags"]
+        )
     ]
+    if conflicting_tags:
+        warnings.append(
+            "Removed conflicting include tags due to exclusions: "
+            + ", ".join(sorted(set(conflicting_tags)))
+        )
+
+    provided_warnings = raw_query.get("parser_warnings")
+    if isinstance(provided_warnings, list):
+        warnings.extend([str(item) for item in provided_warnings if str(item).strip()])
+    parsed["parser_warnings"] = warnings
 
     return parsed
 
@@ -415,6 +441,7 @@ def parse_prompt_to_query(
     )
 
     if not use_openai_parser:
+        rule_query["parser_warnings"] = list(rule_query.get("parser_warnings", []))
         return rule_query
 
     try:
@@ -456,6 +483,9 @@ def parse_prompt_to_query(
         openai_query = _sanitize_query(json.loads(raw_content))
         openai_query["parser_source"] = "openai"
     except Exception:
+        rule_query["parser_warnings"] = list(rule_query.get("parser_warnings", [])) + [
+            "OpenAI parser unavailable, used rules parser fallback."
+        ]
         return rule_query
 
     # Merge strategy: OpenAI first, rule-based fills gaps.
@@ -479,7 +509,10 @@ def parse_prompt_to_query(
     if merged.get("num_meals") in (None, 0):
         merged["num_meals"] = rule_query.get("num_meals", 3)
 
-    return _sanitize_query(merged)
+    merged_query = _sanitize_query(merged)
+    if merged_query.get("parser_source") == "openai":
+        merged_query["parser_warnings"] = list(merged_query.get("parser_warnings", []))
+    return merged_query
 
 
 def build_plan_queryset(base_queryset: QuerySet[Recipe], parsed_query: dict[str, Any]) -> QuerySet[Recipe]:
