@@ -50,6 +50,11 @@ function App() {
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [shoppingList, setShoppingList] = useState(null);
+  const [availableTags, setAvailableTags] = useState([]);
+  const [includeTags, setIncludeTags] = useState([]);
+  const [excludeTags, setExcludeTags] = useState([]);
+  const [includeTagDraft, setIncludeTagDraft] = useState("");
+  const [excludeTagDraft, setExcludeTagDraft] = useState("");
 
   const [preferences, setPreferences] = useState({
     excluded_ingredients: [],
@@ -102,6 +107,11 @@ function App() {
     setParsedQuery(null);
     setRecipes([]);
     setMealPlan(null);
+    setAvailableTags([]);
+    setIncludeTags([]);
+    setExcludeTags([]);
+    setIncludeTagDraft("");
+    setExcludeTagDraft("");
     setPreferences({
       excluded_ingredients: [],
       preferred_tags: [],
@@ -195,18 +205,43 @@ function App() {
     setSavedPlans(Array.isArray(data) ? data : []);
   };
 
+  const loadTags = async () => {
+    const data = await apiFetch("/tags/?limit=220");
+    setAvailableTags(Array.isArray(data?.tags) ? data.tags : []);
+  };
+
   const loadPlanDetail = async (planId) => {
     if (!planId) return;
-    const data = await apiFetch(`/meal-plans/${planId}/`);
-    setSelectedPlan(data);
-    setSelectedPlanId(String(planId));
+    try {
+      const data = await apiFetch(`/meal-plans/${planId}/`);
+      setSelectedPlan(data);
+      setSelectedPlanId(String(planId));
+      setError("");
+    } catch (err) {
+      if (String(err.message).includes("404")) {
+        setError("That meal plan was not found for this account.");
+      } else {
+        setError(err.message);
+      }
+      setSelectedPlan(null);
+    }
   };
 
   const loadShoppingList = async (planId) => {
     if (!planId) return;
-    const data = await apiFetch(`/meal-plans/${planId}/shopping-list/`);
-    setShoppingList(data);
-    setSelectedPlanId(String(planId));
+    try {
+      const data = await apiFetch(`/meal-plans/${planId}/shopping-list/`);
+      setShoppingList(data);
+      setSelectedPlanId(String(planId));
+      setError("");
+    } catch (err) {
+      if (String(err.message).includes("404")) {
+        setError("No shopping list found for that plan in this account. Try generating one.");
+      } else {
+        setError(err.message);
+      }
+      setShoppingList(null);
+    }
   };
 
   useEffect(() => {
@@ -215,7 +250,7 @@ function App() {
     const boot = async () => {
       setError("");
       try {
-        await Promise.all([loadProfile(), loadPreferences(), loadSavedPlans()]);
+        await Promise.all([loadProfile(), loadPreferences(), loadSavedPlans(), loadTags()]);
       } catch (err) {
         setError(err.message);
       }
@@ -224,6 +259,17 @@ function App() {
     boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
+
+  useEffect(() => {
+    if (savedPlans.length === 0) {
+      setSelectedPlanId("");
+      return;
+    }
+    const hasSelected = savedPlans.some((plan) => String(plan.id) === String(selectedPlanId));
+    if (!hasSelected) {
+      setSelectedPlanId(String(savedPlans[0].id));
+    }
+  }, [savedPlans, selectedPlanId]);
 
   const handleAuthSubmit = async (event) => {
     event.preventDefault();
@@ -266,6 +312,31 @@ function App() {
     }
   };
 
+  const addTagConstraint = (type) => {
+    if (type === "include") {
+      const tag = includeTagDraft.trim().toLowerCase();
+      if (!tag) return;
+      setIncludeTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
+      setExcludeTags((prev) => prev.filter((x) => x !== tag));
+      setIncludeTagDraft("");
+      return;
+    }
+
+    const tag = excludeTagDraft.trim().toLowerCase();
+    if (!tag) return;
+    setExcludeTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
+    setIncludeTags((prev) => prev.filter((x) => x !== tag));
+    setExcludeTagDraft("");
+  };
+
+  const removeTagConstraint = (type, tag) => {
+    if (type === "include") {
+      setIncludeTags((prev) => prev.filter((x) => x !== tag));
+      return;
+    }
+    setExcludeTags((prev) => prev.filter((x) => x !== tag));
+  };
+
   const handleGeneratePlan = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -278,7 +349,11 @@ function App() {
     try {
       const data = await apiFetch("/meal-plans/generate/", {
         method: "POST",
-        body: { prompt },
+        body: {
+          prompt,
+          include_tags: includeTags,
+          exclude_tags: excludeTags,
+        },
       });
 
       setParsedQuery(data.query || null);
@@ -343,7 +418,11 @@ function App() {
       }
       await loadSavedPlans();
     } catch (err) {
-      setError(err.message);
+      if (String(err.message).includes("404")) {
+        setError("That meal plan does not belong to this account.");
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -515,6 +594,91 @@ function App() {
                   Prompt
                   <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
                 </label>
+                <div className="filter-grid">
+                  <label className="label">
+                    Include tag
+                    <div className="inline-control">
+                      <select
+                        className="input"
+                        value={includeTagDraft}
+                        onChange={(e) => setIncludeTagDraft(e.target.value)}
+                      >
+                        <option value="">Select tag</option>
+                        {availableTags.map((tag) => (
+                          <option key={`inc-${tag}`} value={tag}>
+                            {tag}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => addTagConstraint("include")}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="label">
+                    Exclude tag
+                    <div className="inline-control">
+                      <select
+                        className="input"
+                        value={excludeTagDraft}
+                        onChange={(e) => setExcludeTagDraft(e.target.value)}
+                      >
+                        <option value="">Select tag</option>
+                        {availableTags.map((tag) => (
+                          <option key={`exc-${tag}`} value={tag}>
+                            {tag}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => addTagConstraint("exclude")}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </label>
+                </div>
+                <div className="constraint-block">
+                  <div className="summary-row">
+                    <span className="summary-key">Include tags</span>
+                    <div className="chips-row">
+                      {includeTags.length === 0 && <span className="chip muted">none</span>}
+                      {includeTags.map((tag) => (
+                        <button
+                          key={`inc-chip-${tag}`}
+                          type="button"
+                          className="chip removable"
+                          onClick={() => removeTagConstraint("include", tag)}
+                        >
+                          {tag} ×
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="summary-row">
+                    <span className="summary-key">Exclude tags</span>
+                    <div className="chips-row">
+                      {excludeTags.length === 0 && <span className="chip muted">none</span>}
+                      {excludeTags.map((tag) => (
+                        <button
+                          key={`exc-chip-${tag}`}
+                          type="button"
+                          className="chip removable danger-chip"
+                          onClick={() => removeTagConstraint("exclude", tag)}
+                        >
+                          {tag} ×
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
                 <div className="quick-prompts">
                   {QUICK_PROMPTS.map((x) => (
                     <button key={x} type="button" className="quick-prompt" onClick={() => setPrompt(x)}>
@@ -773,13 +937,19 @@ function App() {
             <h2 className="panel-title">Shopping List</h2>
             <div className="inline-form">
               <label className="label">
-                Plan ID
-                <input
+                Meal plan
+                <select
                   className="input"
                   value={selectedPlanId}
                   onChange={(e) => setSelectedPlanId(e.target.value)}
-                  placeholder="Enter plan ID"
-                />
+                >
+                  {savedPlans.length === 0 && <option value="">No plans available</option>}
+                  {savedPlans.map((plan) => (
+                    <option key={`shop-plan-${plan.id}`} value={plan.id}>
+                      {plan.title} (ID {plan.id})
+                    </option>
+                  ))}
+                </select>
               </label>
               <button
                 type="button"
@@ -804,7 +974,12 @@ function App() {
               <div className="list-block">
                 {(shoppingList.items || []).map((item) => (
                   <div key={item.ingredient} className="list-item compact">
-                    <span>{item.ingredient}</span>
+                    <div>
+                      <span>{item.ingredient}</span>
+                      {Array.isArray(item.variants) && item.variants.length > 1 && (
+                        <div className="panel-description">From: {item.variants.join(", ")}</div>
+                      )}
+                    </div>
                     <strong>x{item.count}</strong>
                   </div>
                 ))}

@@ -11,6 +11,7 @@ from .views import (
     RegisterView,
     ShoppingListView,
     SwapMealView,
+    TagListView,
 )
 
 urlpatterns = [
@@ -20,6 +21,7 @@ urlpatterns = [
     path("auth/me/", MeView.as_view(), name="auth-me"),
 
     path("preferences/", PreferenceView.as_view(), name="preferences"),
+    path("tags/", TagListView.as_view(), name="tag-list"),
 
     path("meal-plans/generate/", GenerateMealPlanView.as_view(), name="meal-plan-generate"),
     path("meal-plans/", MealPlanListView.as_view(), name="meal-plan-list"),
