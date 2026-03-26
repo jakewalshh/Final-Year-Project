@@ -1,6 +1,7 @@
 import logging
 import json
 import os
+import random
 import re
 
 from django.contrib.auth import get_user_model
@@ -57,6 +58,15 @@ def _to_int(value, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _to_optional_int(value) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _base_queryset():
@@ -147,42 +157,644 @@ def _apply_tag_overrides(parsed_query: dict, include_tags: list[str], exclude_ta
     return updated
 
 
-def _query_with_fallbacks(parsed_query: dict) -> tuple[list, dict]:
+PROTEIN_FAMILY_MAP = {
+    "chicken": "poultry",
+    "turkey": "poultry",
+    "duck": "poultry",
+    "beef": "red_meat",
+    "lamb": "red_meat",
+    "pork": "pork",
+    "ham": "pork",
+    "bacon": "pork",
+    "fish": "fish",
+    "salmon": "fish",
+    "tuna": "fish",
+    "cod": "fish",
+    "halibut": "fish",
+    "shrimp": "seafood",
+    "prawn": "seafood",
+    "tofu": "plant_protein",
+    "bean": "plant_protein",
+    "lentil": "plant_protein",
+    "chickpea": "plant_protein",
+    "egg": "egg",
+}
+
+PROTEIN_AFFORDABILITY = {
+    "plant_protein": 0.95,
+    "egg": 0.9,
+    "poultry": 0.8,
+    "pork": 0.65,
+    "fish": 0.55,
+    "seafood": 0.45,
+    "red_meat": 0.35,
+}
+
+PROTEIN_SUSTAINABILITY = {
+    "plant_protein": 0.95,
+    "egg": 0.8,
+    "poultry": 0.6,
+    "pork": 0.45,
+    "fish": 0.52,
+    "seafood": 0.4,
+    "red_meat": 0.2,
+}
+
+NON_MEAL_NAME_HINTS = {
+    "sauce",
+    "dressing",
+    "dip",
+    "marinade",
+    "gravy",
+    "frosting",
+    "icing",
+    "syrup",
+    "condiment",
+    "rub",
+    "shortcake",
+    "muffin",
+    "cookie",
+    "brownie",
+    "cupcake",
+    "stuffing",
+    "fritter",
+    "salad",
+    "slaw",
+}
+
+HARD_NON_MEAL_NAME_HINTS = {
+    "dessert",
+    "sauce",
+    "dressing",
+    "dip",
+    "marinade",
+    "frosting",
+    "icing",
+    "syrup",
+    "condiment",
+    "cookie",
+    "brownie",
+    "cupcake",
+    "muffin",
+    "shortcake",
+}
+
+NON_MEAL_TAG_HINTS = {
+    "dessert",
+    "desserts",
+    "cookie",
+    "cookies",
+    "cakes",
+    "cake",
+    "cupcakes",
+    "muffins",
+    "quick-breads",
+    "bread",
+    "breads",
+    "dips",
+    "dip",
+    "sauces",
+    "sauce",
+    "condiments",
+    "appetizer",
+    "appetizers",
+    "snacks",
+    "snack",
+    "side-dishes",
+    "side dish",
+    "side",
+    "beverages",
+    "drinks",
+    "cocktails",
+}
+
+MEAL_TAG_HINTS = {
+    "main-dish",
+    "main course",
+    "main",
+    "dinner",
+    "lunch",
+    "breakfast",
+    "one-dish meal",
+    "meat",
+    "poultry",
+    "seafood",
+}
+
+MEAL_NAME_HINTS = {
+    "soup",
+    "stew",
+    "curry",
+    "pasta",
+    "sandwich",
+    "burger",
+    "pizza",
+    "tacos",
+    "bowl",
+    "risotto",
+    "chili",
+    "roast",
+    "stir fry",
+    "stir-fry",
+    "lasagna",
+    "casserole",
+    "kebab",
+    "kabob",
+}
+
+OPTIMIZATION_PROFILES = {
+    "balanced": {
+        "base_weight": 0.58,
+        "overlap_weight": 0.42,
+        "diversity_penalty": 0.10,
+        "component_weights": {
+            "anchor": 0.40,
+            "affordability": 0.28,
+            "sustainability": 0.14,
+            "meal_quality": 0.18,
+        },
+    },
+    "budget": {
+        "base_weight": 0.55,
+        "overlap_weight": 0.45,
+        "diversity_penalty": 0.08,
+        "component_weights": {
+            "anchor": 0.30,
+            "affordability": 0.42,
+            "sustainability": 0.10,
+            "meal_quality": 0.18,
+        },
+    },
+    "sustainability": {
+        "base_weight": 0.55,
+        "overlap_weight": 0.45,
+        "diversity_penalty": 0.08,
+        "component_weights": {
+            "anchor": 0.30,
+            "affordability": 0.14,
+            "sustainability": 0.38,
+            "meal_quality": 0.18,
+        },
+    },
+}
+
+
+def _clamp_float(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _normalize_optimize_mode(value: str | None) -> str:
+    mode = str(value or "balanced").strip().lower()
+    if mode in OPTIMIZATION_PROFILES:
+        return mode
+    return "balanced"
+
+
+def _recipe_ingredient_names(recipe: Recipe) -> list[str]:
+    if hasattr(recipe, "prefetched_recipe_ingredients") and recipe.prefetched_recipe_ingredients:
+        return [ri.ingredient.name for ri in recipe.prefetched_recipe_ingredients]
+    return [x.strip() for x in recipe.ingredients.split(",") if x.strip()]
+
+
+def _canonicalize_terms(raw_name: str) -> set[str]:
+    cleaned = str(raw_name or "").strip().lower()
+    if not cleaned:
+        return set()
+
+    segments = [part.strip() for part in re.split(r"\band\b|&|/|\+", cleaned) if part.strip()]
+    if not segments:
+        segments = [cleaned]
+
+    terms = set()
+    for segment in segments:
+        canonical = _canonical_ingredient_name(segment)
+        if canonical:
+            terms.add(canonical)
+    return terms
+
+
+def _protein_family(term: str) -> str | None:
+    token = str(term or "").strip().lower()
+    if not token:
+        return None
+    if token in PROTEIN_FAMILY_MAP:
+        return PROTEIN_FAMILY_MAP[token]
+    singular = token[:-1] if token.endswith("s") else token
+    if singular in PROTEIN_FAMILY_MAP:
+        return PROTEIN_FAMILY_MAP[singular]
+    for key, family in PROTEIN_FAMILY_MAP.items():
+        if key in token:
+            return family
+    return None
+
+
+def _anchor_targets(parsed_query: dict) -> tuple[set[str], set[str]]:
+    anchor_terms: set[str] = set()
+    anchor_families: set[str] = set()
+    for keyword in _normalize_string_list(parsed_query.get("ingredient_keywords")):
+        terms = _canonicalize_terms(keyword)
+        anchor_terms.update(terms)
+        for term in terms:
+            family = _protein_family(term)
+            if family:
+                anchor_families.add(family)
+    return anchor_terms, anchor_families
+
+
+def _meal_likelihood(
+    *,
+    name: str,
+    tags: list[str],
+    n_ingredients: int | None,
+    n_steps: int | None,
+    minutes: int | None,
+    protein_families: set[str],
+) -> float:
+    score = 0.5
+    lower_name = str(name or "").strip().lower()
+    tag_tokens = [str(tag or "").strip().lower() for tag in tags]
+    n_ing = n_ingredients or 0
+    n_stp = n_steps or 0
+    mins = minutes if minutes is not None else 45
+
+    if any(hint in lower_name for hint in NON_MEAL_NAME_HINTS):
+        score -= 0.55
+    if any(any(hint in token for hint in NON_MEAL_TAG_HINTS) for token in tag_tokens):
+        score -= 0.35
+    if any(any(hint in token for hint in MEAL_TAG_HINTS) for token in tag_tokens):
+        score += 0.2
+    if any(hint in lower_name for hint in MEAL_NAME_HINTS):
+        score += 0.1
+
+    if n_ing >= 6:
+        score += 0.1
+    elif n_ing <= 3:
+        score -= 0.2
+
+    if n_stp >= 4:
+        score += 0.1
+    elif n_stp <= 2:
+        score -= 0.2
+
+    if mins < 6:
+        score -= 0.15
+    elif 10 <= mins <= 60:
+        score += 0.05
+
+    if protein_families:
+        score += 0.12
+    else:
+        score -= 0.07
+
+    return _clamp_float(score)
+
+
+def _is_hard_non_meal(*, name: str, tags: list[str]) -> bool:
+    lower_name = str(name or "").strip().lower()
+    tag_tokens = [str(tag or "").strip().lower() for tag in tags]
+    if any(hint in lower_name for hint in HARD_NON_MEAL_NAME_HINTS):
+        return True
+    if any(any(hint in token for hint in NON_MEAL_TAG_HINTS) for token in tag_tokens):
+        return True
+    return False
+
+
+def _candidate_profile(recipe: Recipe) -> dict:
+    ingredient_terms: set[str] = set()
+    for raw_name in _recipe_ingredient_names(recipe):
+        ingredient_terms.update(_canonicalize_terms(raw_name))
+    protein_families = {family for family in (_protein_family(x) for x in ingredient_terms) if family}
+    recipe_tags = []
+    if hasattr(recipe, "prefetched_recipe_tags") and recipe.prefetched_recipe_tags:
+        recipe_tags = [row.tag.name for row in recipe.prefetched_recipe_tags]
+    hard_non_meal = _is_hard_non_meal(name=recipe.name, tags=recipe_tags)
+    meal_likelihood = _meal_likelihood(
+        name=recipe.name,
+        tags=recipe_tags,
+        n_ingredients=recipe.n_ingredients,
+        n_steps=recipe.n_steps,
+        minutes=recipe.minutes,
+        protein_families=protein_families,
+    )
+    return {
+        "recipe": recipe,
+        "ingredients": ingredient_terms,
+        "protein_families": protein_families,
+        "meal_likelihood": meal_likelihood,
+        "hard_non_meal": hard_non_meal,
+    }
+
+
+def _base_candidate_score(
+    profile: dict,
+    *,
+    ingredient_frequency: dict[str, int],
+    max_frequency: int,
+    anchor_terms: set[str],
+    anchor_families: set[str],
+    component_weights: dict[str, float],
+) -> dict[str, float]:
+    ingredient_terms = profile["ingredients"]
+    protein_families = profile["protein_families"]
+    recipe = profile["recipe"]
+
+    if anchor_terms:
+        anchor_score = 1.0 if ingredient_terms & anchor_terms else 0.0
+    elif anchor_families:
+        anchor_score = 1.0 if protein_families & anchor_families else 0.0
+    else:
+        anchor_score = 0.5
+
+    if ingredient_terms:
+        ingredient_commonality = sum(ingredient_frequency.get(term, 0) / max_frequency for term in ingredient_terms) / len(
+            ingredient_terms
+        )
+    else:
+        ingredient_commonality = 0.35
+
+    if protein_families:
+        protein_affordability = sum(PROTEIN_AFFORDABILITY.get(family, 0.6) for family in protein_families) / len(
+            protein_families
+        )
+        sustainability = sum(PROTEIN_SUSTAINABILITY.get(family, 0.6) for family in protein_families) / len(
+            protein_families
+        )
+    else:
+        protein_affordability = 0.7
+        sustainability = 0.65
+
+    minutes = recipe.minutes if recipe.minutes is not None else 45
+    minutes_score = _clamp_float(1 - (min(max(minutes, 0), 120) / 120))
+    affordability = _clamp_float(0.55 * ingredient_commonality + 0.35 * protein_affordability + 0.10 * minutes_score)
+    meal_quality = profile.get("meal_likelihood", 0.5)
+
+    total = _clamp_float(
+        component_weights["anchor"] * anchor_score
+        + component_weights["affordability"] * affordability
+        + component_weights["sustainability"] * sustainability
+        + component_weights["meal_quality"] * meal_quality
+    )
+
+    return {
+        "anchor": anchor_score,
+        "affordability": affordability,
+        "sustainability": sustainability,
+        "meal_quality": meal_quality,
+        "base": total,
+    }
+
+
+def _overlap_score(candidate_terms: set[str], basket_terms: set[str]) -> float:
+    if not basket_terms or not candidate_terms:
+        return 0.0
+    intersection = len(candidate_terms & basket_terms)
+    if intersection == 0:
+        return 0.0
+    union = len(candidate_terms | basket_terms)
+    coverage = intersection / max(1, len(candidate_terms))
+    jaccard = intersection / max(1, union)
+    return _clamp_float(0.6 * coverage + 0.4 * jaccard)
+
+
+def _diversity_penalty(candidate_terms: set[str], selected_profiles: list[dict], *, penalty_scale: float) -> float:
+    penalty = 0.0
+    for selected in selected_profiles:
+        existing_terms = selected["ingredients"]
+        if not existing_terms:
+            continue
+        jaccard = len(candidate_terms & existing_terms) / max(1, len(candidate_terms | existing_terms))
+        if jaccard > 0.82:
+            penalty += penalty_scale
+    return penalty
+
+
+def _select_optimized_recipes(
+    candidates: list[Recipe],
+    parsed_query: dict,
+    optimize_mode: str = "balanced",
+    random_seed: int | None = None,
+) -> tuple[list[Recipe], dict]:
+    target_count = _to_int(parsed_query.get("num_meals"), 3)
+    target_count = max(1, target_count)
+    optimize_mode = _normalize_optimize_mode(optimize_mode)
+    profile_config = OPTIMIZATION_PROFILES[optimize_mode]
+    component_weights = profile_config["component_weights"]
+    base_weight = profile_config["base_weight"]
+    overlap_weight = profile_config["overlap_weight"]
+    diversity_penalty_scale = profile_config["diversity_penalty"]
+
+    if not candidates:
+        return [], {
+            "candidate_count": 0,
+            "selected_count": 0,
+            "avg_overlap": 0.0,
+            "anchor_terms": [],
+            "anchor_families": [],
+            "optimize_mode": optimize_mode,
+            "weights": profile_config,
+            "selection_seed": random_seed,
+        }
+
+    profiles = [_candidate_profile(recipe) for recipe in candidates]
+    ingredient_frequency: dict[str, int] = {}
+    for profile in profiles:
+        for term in profile["ingredients"]:
+            ingredient_frequency[term] = ingredient_frequency.get(term, 0) + 1
+    max_frequency = max(ingredient_frequency.values(), default=1)
+    anchor_terms, anchor_families = _anchor_targets(parsed_query)
+
+    for profile in profiles:
+        profile["metrics"] = _base_candidate_score(
+            profile,
+            ingredient_frequency=ingredient_frequency,
+            max_frequency=max_frequency,
+            anchor_terms=anchor_terms,
+            anchor_families=anchor_families,
+            component_weights=component_weights,
+        )
+
+    rng = random.Random(random_seed) if random_seed is not None else random.SystemRandom()
+    remaining = list(profiles)
+    selected_profiles: list[dict] = []
+    selected_recipes: list[Recipe] = []
+    basket_terms: set[str] = set()
+    score_trace = []
+
+    while remaining and len(selected_recipes) < target_count:
+        best_index = None
+        best_meta = None
+        scored_items = []
+
+        for idx, profile in enumerate(remaining):
+            overlap = _overlap_score(profile["ingredients"], basket_terms)
+            penalty = _diversity_penalty(
+                profile["ingredients"],
+                selected_profiles,
+                penalty_scale=diversity_penalty_scale,
+            )
+            base_score = profile["metrics"]["base"]
+            if selected_profiles:
+                combined = (base_weight * base_score) + (overlap_weight * overlap) - penalty
+            else:
+                combined = base_score
+            combined = _clamp_float(combined, -1.0, 1.0)
+            scored_items.append(
+                {
+                    "idx": idx,
+                    "profile": profile,
+                    "combined": combined,
+                    "base": base_score,
+                    "overlap": overlap,
+                    "diversity_penalty": penalty,
+                }
+            )
+
+        scored_items.sort(
+            key=lambda item: (-item["combined"], item["profile"]["recipe"].id),
+        )
+        pool_size = min(len(scored_items), max(4, target_count * 4))
+        exploration_pool = scored_items[:pool_size]
+        floor = min(item["combined"] for item in exploration_pool)
+        weights = [max(0.001, (item["combined"] - floor) + 0.03) for item in exploration_pool]
+        chosen_item = rng.choices(exploration_pool, weights=weights, k=1)[0]
+        best_index = chosen_item["idx"]
+        best_meta = {
+            "recipe_id": chosen_item["profile"]["recipe"].id,
+            "base": round(chosen_item["base"], 4),
+            "overlap": round(chosen_item["overlap"], 4),
+            "diversity_penalty": round(chosen_item["diversity_penalty"], 4),
+            "combined": round(chosen_item["combined"], 4),
+            "pool_size": pool_size,
+        }
+
+        chosen = remaining.pop(best_index)
+        selected_profiles.append(chosen)
+        selected_recipes.append(chosen["recipe"])
+        basket_terms.update(chosen["ingredients"])
+        score_trace.append(best_meta)
+
+    if len(selected_profiles) <= 1:
+        avg_overlap = 0.0
+    else:
+        overlaps = []
+        for idx, profile in enumerate(selected_profiles):
+            for jdx, other in enumerate(selected_profiles):
+                if jdx <= idx:
+                    continue
+                overlaps.append(_overlap_score(profile["ingredients"], other["ingredients"]))
+        avg_overlap = round(sum(overlaps) / max(1, len(overlaps)), 4)
+
+    return selected_recipes, {
+        "candidate_count": len(candidates),
+        "selected_count": len(selected_recipes),
+        "avg_overlap": avg_overlap,
+        "anchor_terms": sorted(anchor_terms),
+        "anchor_families": sorted(anchor_families),
+        "optimize_mode": optimize_mode,
+        "weights": profile_config,
+        "selection_seed": random_seed,
+        "selection_trace": score_trace,
+    }
+
+
+def _filter_meal_candidates(candidates: list[Recipe], required_count: int) -> tuple[list[Recipe], dict]:
+    if not candidates:
+        return [], {"raw_candidate_count": 0, "strict_candidate_count": 0, "relaxed_candidate_count": 0}
+
+    profiles = [_candidate_profile(recipe) for recipe in candidates]
+    non_hard = [p for p in profiles if not p.get("hard_non_meal", False)]
+    strict = [p for p in non_hard if p.get("meal_likelihood", 0) >= 0.55]
+    relaxed = [p for p in non_hard if p.get("meal_likelihood", 0) >= 0.42]
+
+    if len(strict) >= required_count:
+        selected_profiles = strict
+    elif len(relaxed) >= required_count:
+        selected_profiles = relaxed
+    else:
+        selected_profiles = relaxed
+
+    return [p["recipe"] for p in selected_profiles], {
+        "raw_candidate_count": len(candidates),
+        "hard_non_meal_removed": len(profiles) - len(non_hard),
+        "strict_candidate_count": len(strict),
+        "relaxed_candidate_count": len(relaxed),
+    }
+
+
+def _query_with_fallbacks(
+    parsed_query: dict,
+    optimize_mode: str = "balanced",
+    selection_seed: int | None = None,
+) -> tuple[list, dict]:
     attempts = []
     base = dict(parsed_query)
+    required_count = max(1, _to_int(base.get("num_meals"), 3))
+    best_result = {"recipes": [], "stage": "none", "optimizer": {}}
 
-    def run_attempt(label: str, query_payload: dict):
+    def run_attempt(stage_index: int, label: str, query_payload: dict):
+        candidate_limit = min(240, max(80, _to_int(query_payload.get("num_meals"), 3) * 25))
         queryset = build_plan_queryset(_base_queryset(), query_payload)
-        recipes = list(queryset[: query_payload["num_meals"]])
-        attempts.append({"stage": label, "count": len(recipes)})
-        return recipes
+        raw_candidates = list(queryset[:candidate_limit])
+        filtered_candidates, filter_meta = _filter_meal_candidates(raw_candidates, required_count=required_count)
 
-    recipes = run_attempt("initial", base)
-    if recipes:
-        return recipes, {"attempts": attempts, "resolved_stage": "initial"}
+        stage_seed = None
+        if selection_seed is not None:
+            stage_seed = selection_seed + stage_index
+
+        selected, optimizer_meta = _select_optimized_recipes(
+            filtered_candidates,
+            query_payload,
+            optimize_mode=optimize_mode,
+            random_seed=stage_seed,
+        )
+        attempts.append(
+            {
+                "stage": label,
+                "candidate_count": len(filtered_candidates),
+                "raw_candidate_count": filter_meta.get("raw_candidate_count", len(raw_candidates)),
+                "hard_non_meal_removed": filter_meta.get("hard_non_meal_removed", 0),
+                "strict_candidate_count": filter_meta.get("strict_candidate_count", 0),
+                "relaxed_candidate_count": filter_meta.get("relaxed_candidate_count", 0),
+                "selected_count": len(selected),
+                "avg_overlap": optimizer_meta.get("avg_overlap", 0.0),
+                "optimize_mode": optimizer_meta.get("optimize_mode", optimize_mode),
+                "selection_seed": optimizer_meta.get("selection_seed"),
+            }
+        )
+        return selected, optimizer_meta
+
+    stages = [("initial", base)]
 
     q1 = dict(base)
     q1["search_text"] = ""
-    recipes = run_attempt("relax_search_text", q1)
-    if recipes:
-        return recipes, {"attempts": attempts, "resolved_stage": "relax_search_text"}
+    stages.append(("relax_search_text", q1))
 
     q2 = dict(q1)
     q2["max_calories"] = None
     q2["min_protein_pdv"] = None
     q2["max_carbs_pdv"] = None
-    recipes = run_attempt("relax_nutrition", q2)
-    if recipes:
-        return recipes, {"attempts": attempts, "resolved_stage": "relax_nutrition"}
+    stages.append(("relax_nutrition", q2))
 
     q3 = dict(q2)
     if q3.get("max_minutes") is not None:
         q3["max_minutes"] = q3["max_minutes"] + 20
-    recipes = run_attempt("widen_minutes", q3)
-    if recipes:
-        return recipes, {"attempts": attempts, "resolved_stage": "widen_minutes"}
+    stages.append(("widen_minutes", q3))
 
-    return [], {"attempts": attempts, "resolved_stage": "none"}
+    for stage_index, (label, payload) in enumerate(stages):
+        selected, optimizer_meta = run_attempt(stage_index, label, payload)
+        if len(selected) > len(best_result["recipes"]):
+            best_result = {"recipes": selected, "stage": label, "optimizer": optimizer_meta}
+        if len(selected) >= required_count:
+            return selected, {"attempts": attempts, "resolved_stage": label, "optimizer": optimizer_meta}
+
+    if best_result["recipes"]:
+        return best_result["recipes"], {
+            "attempts": attempts,
+            "resolved_stage": best_result["stage"],
+            "optimizer": best_result["optimizer"],
+        }
+
+    return [], {"attempts": attempts, "resolved_stage": "none", "optimizer": {}}
 
 
 INGREDIENT_CANONICAL_PATTERNS = [
@@ -524,17 +1136,34 @@ class GenerateMealPlanView(APIView):
         parsed_query = _merge_preference_constraints(parsed_query, preference)
         include_tags_override = _normalize_string_list(request.data.get("include_tags"))
         exclude_tags_override = _normalize_string_list(request.data.get("exclude_tags"))
+        optimize_mode = _normalize_optimize_mode(request.data.get("optimize_mode"))
+        selection_seed = _to_optional_int(request.data.get("selection_seed"))
         if include_tags_override or exclude_tags_override:
             parsed_query = _apply_tag_overrides(
                 parsed_query,
                 include_tags=include_tags_override,
                 exclude_tags=exclude_tags_override,
             )
-        recipes, fallback_meta = _query_with_fallbacks(parsed_query)
+        recipes, fallback_meta = _query_with_fallbacks(
+            parsed_query,
+            optimize_mode=optimize_mode,
+            selection_seed=selection_seed,
+        )
 
         parser_warnings = list(parsed_query.get("parser_warnings", []))
         if not recipes:
             parser_warnings.append("No recipes found after fallback stages. Try broadening constraints.")
+        elif len(recipes) < parsed_query.get("num_meals", len(recipes)):
+            parser_warnings.append(
+                f"Only {len(recipes)} recipes found for requested {parsed_query.get('num_meals')} meals."
+            )
+        attempts = fallback_meta.get("attempts", [])
+        if attempts:
+            final_attempt = attempts[-1]
+            if final_attempt.get("raw_candidate_count", 0) > final_attempt.get("candidate_count", 0):
+                parser_warnings.append(
+                    "Filtered out non-meal candidates (e.g., sauces/snacks/desserts) before final selection."
+                )
 
         parsed_query["parser_warnings"] = parser_warnings
 
@@ -550,11 +1179,14 @@ class GenerateMealPlanView(APIView):
                 MealPlanItem.objects.create(meal_plan=meal_plan, position=idx, recipe=recipe)
 
         logger.info(
-            "plan_generated user=%s parser_source=%s result_count=%s fallback_stage=%s",
+            "plan_generated user=%s parser_source=%s result_count=%s fallback_stage=%s candidate_count=%s overlap=%s optimize_mode=%s",
             request.user.id,
             parsed_query.get("parser_source"),
             len(recipes),
             fallback_meta.get("resolved_stage"),
+            fallback_meta.get("optimizer", {}).get("candidate_count"),
+            fallback_meta.get("optimizer", {}).get("avg_overlap"),
+            fallback_meta.get("optimizer", {}).get("optimize_mode", optimize_mode),
         )
 
         return Response(
@@ -565,6 +1197,8 @@ class GenerateMealPlanView(APIView):
                     "ingredient_keyword": parsed_query.get("ingredient_keywords", [""])[0]
                     if parsed_query.get("ingredient_keywords")
                     else "",
+                    "optimize_mode": fallback_meta.get("optimizer", {}).get("optimize_mode", optimize_mode),
+                    "selection_seed": fallback_meta.get("optimizer", {}).get("selection_seed"),
                     "fallback": fallback_meta,
                 },
                 "recipes": [_serialize_recipe(recipe) for recipe in recipes],

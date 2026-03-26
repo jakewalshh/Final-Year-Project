@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 from recipes.models import Ingredient, Recipe, RecipeIngredient, RecipeTag, Tag
 
 from .models import MealPlan, MealPlanItem, ShoppingList, UserPreference
-from .views import _build_shopping_items_openai
+from .views import _build_shopping_items_openai, _filter_meal_candidates, _select_optimized_recipes
 
 User = get_user_model()
 
@@ -15,15 +15,19 @@ class PlannerApiTests(APITestCase):
     def setUp(self):
         self._old_use_openai_shopping = os.environ.get("USE_OPENAI_SHOPPING_CONDENSER")
         os.environ["USE_OPENAI_SHOPPING_CONDENSER"] = "0"
+        self._old_use_openai_parser = os.environ.get("USE_OPENAI_PARSER")
+        os.environ["USE_OPENAI_PARSER"] = "0"
 
         self.recipe = Recipe.objects.create(
-            name="Quick Veg Stir Fry",
-            ingredients="tofu, broccoli, soy sauce",
-            instructions="Chop\nStir fry",
+            name="Quick Veg Stir Fry Dinner",
+            ingredients="tofu, broccoli, soy sauce, rice, garlic, onion",
+            instructions="Prep\nCook\nSimmer\nServe",
             minutes=20,
             description="Quick vegetarian meal",
             external_id=20001,
             calories=280,
+            n_ingredients=6,
+            n_steps=4,
         )
         ingredient_tofu = Ingredient.objects.create(name="tofu")
         RecipeIngredient.objects.create(recipe=self.recipe, ingredient=ingredient_tofu, position=1)
@@ -35,6 +39,10 @@ class PlannerApiTests(APITestCase):
             os.environ.pop("USE_OPENAI_SHOPPING_CONDENSER", None)
         else:
             os.environ["USE_OPENAI_SHOPPING_CONDENSER"] = self._old_use_openai_shopping
+        if self._old_use_openai_parser is None:
+            os.environ.pop("USE_OPENAI_PARSER", None)
+        else:
+            os.environ["USE_OPENAI_PARSER"] = self._old_use_openai_parser
 
     def _register_and_login(self):
         register_resp = self.client.post(
@@ -89,11 +97,19 @@ class PlannerApiTests(APITestCase):
 
         gen_resp = self.client.post(
             reverse("meal-plan-generate"),
-            {"prompt": "Create 2 vegetarian meals with tofu", "include_tags": ["vegetarian"]},
+            {
+                "prompt": "Create 2 vegetarian meals with tofu",
+                "include_tags": ["vegetarian"],
+                "optimize_mode": "budget",
+            },
             format="json",
         )
         self.assertEqual(gen_resp.status_code, 200)
         self.assertFalse(gen_resp.data["no_results"])
+        self.assertEqual(gen_resp.data["query"]["optimize_mode"], "budget")
+        self.assertEqual(gen_resp.data["query"]["fallback"]["optimizer"]["optimize_mode"], "budget")
+        self.assertIn("fallback", gen_resp.data["query"])
+        self.assertIn("optimizer", gen_resp.data["query"]["fallback"])
 
         plan_id = gen_resp.data["meal_plan"]["id"]
         self.assertTrue(MealPlan.objects.filter(id=plan_id).exists())
@@ -190,3 +206,178 @@ class PlannerApiTests(APITestCase):
         self.assertEqual(item_map["salt"]["count"], 2)
         self.assertEqual(item_map["pepper"]["count"], 1)
         self.assertEqual(item_map["chicken"]["count"], 2)
+
+    def test_optimizer_prefers_anchor_protein(self):
+        chicken_1 = Recipe.objects.create(
+            name="Chicken Rice Bowl",
+            ingredients="chicken breast, rice, onion",
+            instructions="Cook",
+            minutes=25,
+            external_id=32001,
+        )
+        chicken_2 = Recipe.objects.create(
+            name="Chicken Curry",
+            ingredients="chicken thighs, rice, garlic",
+            instructions="Cook",
+            minutes=30,
+            external_id=32002,
+        )
+        beef = Recipe.objects.create(
+            name="Beef Stir Fry",
+            ingredients="beef, broccoli, soy sauce",
+            instructions="Cook",
+            minutes=20,
+            external_id=32003,
+        )
+        tofu = Recipe.objects.create(
+            name="Tofu Tray Bake",
+            ingredients="tofu, peppers, olive oil",
+            instructions="Cook",
+            minutes=35,
+            external_id=32004,
+        )
+
+        selected, meta = _select_optimized_recipes(
+            [chicken_1, chicken_2, beef, tofu],
+            {"num_meals": 2, "ingredient_keywords": ["chicken"]},
+            random_seed=11,
+        )
+        self.assertEqual(len(selected), 2)
+        self.assertEqual({recipe.name for recipe in selected}, {"Chicken Rice Bowl", "Chicken Curry"})
+        self.assertIn("poultry", meta["anchor_families"])
+
+    def test_optimizer_prefers_shared_budget_ingredients(self):
+        bean_1 = Recipe.objects.create(
+            name="Budget Bean Bowl",
+            ingredients="beans, rice, onion",
+            instructions="Cook",
+            minutes=20,
+            external_id=32101,
+        )
+        bean_2 = Recipe.objects.create(
+            name="Bean Chili",
+            ingredients="beans, tomato, onion",
+            instructions="Cook",
+            minutes=30,
+            external_id=32102,
+        )
+        salmon = Recipe.objects.create(
+            name="Salmon Plate",
+            ingredients="salmon, asparagus, lemon",
+            instructions="Cook",
+            minutes=25,
+            external_id=32103,
+        )
+        lamb = Recipe.objects.create(
+            name="Lamb Roast",
+            ingredients="lamb, potato, rosemary",
+            instructions="Cook",
+            minutes=60,
+            external_id=32104,
+        )
+
+        selected, _ = _select_optimized_recipes(
+            [bean_1, bean_2, salmon, lamb],
+            {"num_meals": 2, "ingredient_keywords": []},
+            random_seed=11,
+        )
+        self.assertEqual({recipe.name for recipe in selected}, {"Budget Bean Bowl", "Bean Chili"})
+
+    def test_optimizer_mode_toggle_changes_tradeoff(self):
+        bean = Recipe.objects.create(
+            name="Bean Rice Bowl",
+            ingredients="beans, rice, onion",
+            instructions="Cook",
+            minutes=25,
+            external_id=32201,
+        )
+        pork = Recipe.objects.create(
+            name="Pork Rice Bowl",
+            ingredients="pork, rice, onion",
+            instructions="Cook",
+            minutes=25,
+            external_id=32202,
+        )
+        fish = Recipe.objects.create(
+            name="Fish Rice Bowl",
+            ingredients="salmon, rice, onion",
+            instructions="Cook",
+            minutes=25,
+            external_id=32203,
+        )
+
+        budget_selected, budget_meta = _select_optimized_recipes(
+            [bean, pork, fish],
+            {"num_meals": 2, "ingredient_keywords": []},
+            optimize_mode="budget",
+            random_seed=7,
+        )
+        sustainability_selected, sustainability_meta = _select_optimized_recipes(
+            [bean, pork, fish],
+            {"num_meals": 2, "ingredient_keywords": []},
+            optimize_mode="sustainability",
+            random_seed=7,
+        )
+
+        self.assertEqual(budget_meta["optimize_mode"], "budget")
+        self.assertEqual(sustainability_meta["optimize_mode"], "sustainability")
+        self.assertIn("Pork Rice Bowl", {recipe.name for recipe in budget_selected})
+        self.assertIn("Fish Rice Bowl", {recipe.name for recipe in sustainability_selected})
+
+    def test_meal_filter_excludes_non_meal_sauce_candidates(self):
+        sauce = Recipe.objects.create(
+            name="Easy Hollandaise Sauce",
+            ingredients="butter, lemon juice, egg yolks",
+            instructions="Whisk",
+            minutes=10,
+            n_steps=1,
+            n_ingredients=3,
+            external_id=32301,
+        )
+        meal = Recipe.objects.create(
+            name="Chicken Rice Plate",
+            ingredients="chicken, rice, onion, garlic, oil, salt",
+            instructions="Cook\nServe",
+            minutes=25,
+            n_steps=4,
+            n_ingredients=6,
+            external_id=32302,
+        )
+
+        filtered, meta = _filter_meal_candidates([sauce, meal], required_count=1)
+        filtered_names = {recipe.name for recipe in filtered}
+        self.assertIn("Chicken Rice Plate", filtered_names)
+        self.assertNotIn("Easy Hollandaise Sauce", filtered_names)
+        self.assertEqual(meta["raw_candidate_count"], 2)
+
+    def test_optimizer_introduces_seeded_variation(self):
+        recipes = []
+        for idx in range(8):
+            recipes.append(
+                Recipe.objects.create(
+                    name=f"Chicken Meal {idx}",
+                    ingredients=f"chicken, rice, onion, garlic, herb{idx}",
+                    instructions="Cook\nServe",
+                    minutes=25,
+                    n_steps=4,
+                    n_ingredients=5,
+                    external_id=32400 + idx,
+                )
+            )
+
+        selected_seed_1, _ = _select_optimized_recipes(
+            recipes,
+            {"num_meals": 4, "ingredient_keywords": ["chicken"]},
+            optimize_mode="balanced",
+            random_seed=1,
+        )
+        selected_seed_2, _ = _select_optimized_recipes(
+            recipes,
+            {"num_meals": 4, "ingredient_keywords": ["chicken"]},
+            optimize_mode="balanced",
+            random_seed=2,
+        )
+
+        ids_seed_1 = [recipe.id for recipe in selected_seed_1]
+        ids_seed_2 = [recipe.id for recipe in selected_seed_2]
+        self.assertNotEqual(ids_seed_1, ids_seed_2)

@@ -40,6 +40,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [optimizeMode, setOptimizeMode] = useState("balanced");
   const [showNutrition, setShowNutrition] = useState(false);
   const [showDevInspector, setShowDevInspector] = useState(true);
 
@@ -112,6 +113,7 @@ function App() {
     setExcludeTags([]);
     setIncludeTagDraft("");
     setExcludeTagDraft("");
+    setOptimizeMode("balanced");
     setPreferences({
       excluded_ingredients: [],
       preferred_tags: [],
@@ -353,6 +355,7 @@ function App() {
           prompt,
           include_tags: includeTags,
           exclude_tags: excludeTags,
+          optimize_mode: optimizeMode,
         },
       });
 
@@ -594,6 +597,18 @@ function App() {
                   Prompt
                   <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
                 </label>
+                <label className="label">
+                  Optimization mode
+                  <select
+                    className="input"
+                    value={optimizeMode}
+                    onChange={(e) => setOptimizeMode(e.target.value)}
+                  >
+                    <option value="balanced">Balanced</option>
+                    <option value="budget">Budget-first</option>
+                    <option value="sustainability">Sustainability-first</option>
+                  </select>
+                </label>
                 <div className="filter-grid">
                   <label className="label">
                     Include tag
@@ -657,7 +672,7 @@ function App() {
                           className="chip removable"
                           onClick={() => removeTagConstraint("include", tag)}
                         >
-                          {tag} ×
+                          {tag} x
                         </button>
                       ))}
                     </div>
@@ -673,7 +688,7 @@ function App() {
                           className="chip removable danger-chip"
                           onClick={() => removeTagConstraint("exclude", tag)}
                         >
-                          {tag} ×
+                          {tag} x
                         </button>
                       ))}
                     </div>
@@ -732,6 +747,7 @@ function App() {
                   <div className="summary-row"><span className="summary-key">Max calories</span><span>{parsedQuery.max_calories ?? "none"}</span></div>
                   <div className="summary-row"><span className="summary-key">Min protein %DV</span><span>{parsedQuery.min_protein_pdv ?? "none"}</span></div>
                   <div className="summary-row"><span className="summary-key">Max carbs %DV</span><span>{parsedQuery.max_carbs_pdv ?? "none"}</span></div>
+                  <div className="summary-row"><span className="summary-key">Optimization</span><span>{parsedQuery.optimize_mode || parsedQuery.fallback?.optimizer?.optimize_mode || optimizeMode}</span></div>
                   <div className="summary-row"><span className="summary-key">Parser</span><span>{parsedQuery.parser_source || "rules"}</span></div>
                 </div>
               )}
