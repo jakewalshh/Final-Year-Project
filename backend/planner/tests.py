@@ -70,6 +70,9 @@ class PlannerApiTests(APITestCase):
         me_resp = self.client.get(reverse("auth-me"))
         self.assertEqual(me_resp.status_code, 200)
         self.assertEqual(me_resp.data["email"], "test@example.com")
+        self.assertIn("is_staff", me_resp.data)
+        self.assertIn("is_superuser", me_resp.data)
+        self.assertFalse(me_resp.data["is_staff"])
 
     def test_preferences_crud(self):
         self._register_and_login()
@@ -117,6 +120,45 @@ class PlannerApiTests(APITestCase):
         list_resp = self.client.post(reverse("shopping-list", args=[plan_id]), {}, format="json")
         self.assertEqual(list_resp.status_code, 200)
         self.assertTrue(ShoppingList.objects.filter(meal_plan_id=plan_id).exists())
+
+    def test_generate_plan_manual_mode(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "manual",
+                "manual_query": {
+                    "num_meals": 2,
+                    "ingredient_keywords": ["tofu"],
+                    "include_tags": ["vegetarian"],
+                    "exclude_tags": [],
+                    "exclude_ingredients": ["fish"],
+                    "max_minutes": 30,
+                    "max_calories": 600,
+                    "min_protein_pdv": 10,
+                    "max_carbs_pdv": 80,
+                    "search_text": "",
+                },
+                "optimize_mode": "balanced",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        self.assertEqual(gen_resp.data["query"]["input_mode"], "manual")
+        self.assertEqual(gen_resp.data["query"]["parser_source"], "manual")
+        self.assertFalse(gen_resp.data["no_results"])
+
+    def test_generate_plan_manual_mode_requires_manual_query_object(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "manual",
+                "manual_query": "bad",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 400)
 
     def test_tag_list_endpoint(self):
         self._register_and_login()

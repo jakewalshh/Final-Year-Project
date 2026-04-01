@@ -16,7 +16,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from recipes.models import Recipe, RecipeIngredient, RecipeStep, RecipeTag, Tag
-from recipes.planning import build_plan_queryset, parse_prompt_to_query
+from recipes.planning import build_plan_queryset, parse_prompt_to_query, sanitize_query
 from recipes.views import _serialize_recipe
 
 from .models import MealPlan, MealPlanItem, ShoppingList, UserPreference
@@ -1055,6 +1055,8 @@ class RegisterView(APIView):
             {
                 "user_id": user.id,
                 "email": user.email,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
                 "access": access,
                 "refresh": refresh,
             },
@@ -1083,7 +1085,12 @@ class LoginView(APIView):
             {
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
-                "user": {"id": user.id, "email": user.email},
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "is_staff": user.is_staff,
+                    "is_superuser": user.is_superuser,
+                },
             }
         )
 
@@ -1114,23 +1121,33 @@ class GenerateMealPlanView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
+        input_mode = str(request.data.get("input_mode") or "prompt").strip().lower()
+        if input_mode not in {"prompt", "manual"}:
+            return Response({"error": "input_mode must be 'prompt' or 'manual'."}, status=status.HTTP_400_BAD_REQUEST)
+
         prompt = str(request.data.get("prompt") or "").strip()
-        if not prompt:
+        if input_mode == "prompt" and not prompt:
             return Response({"error": "prompt is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        openai_api_key = os.environ.get("OPENAI_API_KEY")
-        use_openai_parser = os.environ.get("USE_OPENAI_PARSER", "1") == "1" and bool(openai_api_key)
-        client = None
-        if use_openai_parser:
-            from openai import OpenAI
+        if input_mode == "manual":
+            raw_manual_query = request.data.get("manual_query")
+            if not isinstance(raw_manual_query, dict):
+                return Response({"error": "manual_query must be an object when input_mode is 'manual'."}, status=status.HTTP_400_BAD_REQUEST)
+            parsed_query = sanitize_query({**raw_manual_query, "parser_source": "manual"})
+        else:
+            openai_api_key = os.environ.get("OPENAI_API_KEY")
+            use_openai_parser = os.environ.get("USE_OPENAI_PARSER", "1") == "1" and bool(openai_api_key)
+            client = None
+            if use_openai_parser:
+                from openai import OpenAI
 
-            client = OpenAI(api_key=openai_api_key)
+                client = OpenAI(api_key=openai_api_key)
 
-        parsed_query = parse_prompt_to_query(
-            user_prompt=prompt,
-            use_openai_parser=use_openai_parser,
-            openai_client=client,
-        )
+            parsed_query = parse_prompt_to_query(
+                user_prompt=prompt,
+                use_openai_parser=use_openai_parser,
+                openai_client=client,
+            )
 
         preference = UserPreference.objects.filter(user=request.user).first()
         parsed_query = _merge_preference_constraints(parsed_query, preference)
@@ -1172,7 +1189,7 @@ class GenerateMealPlanView(APIView):
             meal_plan = MealPlan.objects.create(
                 user=request.user,
                 title=title,
-                source_prompt=prompt,
+                source_prompt=prompt if input_mode == "prompt" else "[manual criteria]",
                 parsed_query=parsed_query,
             )
             for idx, recipe in enumerate(recipes, start=1):
@@ -1200,6 +1217,7 @@ class GenerateMealPlanView(APIView):
                     "optimize_mode": fallback_meta.get("optimizer", {}).get("optimize_mode", optimize_mode),
                     "selection_seed": fallback_meta.get("optimizer", {}).get("selection_seed"),
                     "fallback": fallback_meta,
+                    "input_mode": input_mode,
                 },
                 "recipes": [_serialize_recipe(recipe) for recipe in recipes],
                 "no_results": len(recipes) == 0,

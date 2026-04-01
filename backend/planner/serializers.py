@@ -29,7 +29,7 @@ class RegisterSerializer(serializers.Serializer):
 class UserSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "email")
+        fields = ("id", "email", "is_staff", "is_superuser")
 
 
 class UserPreferenceSerializer(serializers.ModelSerializer):

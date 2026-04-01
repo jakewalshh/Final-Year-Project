@@ -313,7 +313,7 @@ def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
     parsed["search_text"] = str(raw_query.get("search_text") or "").strip().lower()
 
     parser_source = str(raw_query.get("parser_source") or "rules")
-    parsed["parser_source"] = parser_source if parser_source in {"rules", "openai"} else "rules"
+    parsed["parser_source"] = parser_source if parser_source in {"rules", "openai", "manual"} else "rules"
 
     # Resolve include/exclude conflicts defensively.
     conflicting_ingredients = []
@@ -352,6 +352,11 @@ def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
     parsed["parser_warnings"] = warnings
 
     return parsed
+
+
+def sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
+    """Public wrapper so other apps can normalize/validate query payloads."""
+    return _sanitize_query(raw_query)
 
 
 def _infer_query_from_prompt(prompt: str, *, ingredient_lookup: set[str], tag_lookup: set[str]) -> dict[str, Any]:

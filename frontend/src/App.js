@@ -36,13 +36,26 @@ function App() {
   });
 
   const [appTab, setAppTab] = useState("plan");
+  const [inputMode, setInputMode] = useState("prompt");
   const [prompt, setPrompt] = useState("Create 4 vegetarian meals under 30 minutes");
+
+  const [manualFields, setManualFields] = useState({
+    num_meals: "4",
+    ingredient_keywords: "",
+    exclude_ingredients: "",
+    max_minutes: "",
+    max_calories: "",
+    min_protein_pdv: "",
+    max_carbs_pdv: "",
+    search_text: "",
+  });
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [optimizeMode, setOptimizeMode] = useState("balanced");
   const [showNutrition, setShowNutrition] = useState(false);
-  const [showDevInspector, setShowDevInspector] = useState(true);
+  const [showParsedModal, setShowParsedModal] = useState(false);
 
   const [parsedQuery, setParsedQuery] = useState(null);
   const [recipes, setRecipes] = useState([]);
@@ -51,6 +64,7 @@ function App() {
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [shoppingList, setShoppingList] = useState(null);
+
   const [availableTags, setAvailableTags] = useState([]);
   const [includeTags, setIncludeTags] = useState([]);
   const [excludeTags, setExcludeTags] = useState([]);
@@ -74,6 +88,8 @@ function App() {
     max_carbs_pdv: "",
   });
 
+  const isAdmin = Boolean(currentUser?.is_staff);
+
   const parserWarnings = useMemo(() => {
     if (!parsedQuery) return [];
     return Array.isArray(parsedQuery.parser_warnings) ? parsedQuery.parser_warnings : [];
@@ -82,7 +98,15 @@ function App() {
   const persistAuth = (payload) => {
     const access = payload?.access || "";
     const refresh = payload?.refresh || "";
-    const user = payload?.user || (payload?.email ? { id: payload.user_id, email: payload.email } : null);
+    const user = payload?.user ||
+      (payload?.email
+        ? {
+            id: payload.user_id,
+            email: payload.email,
+            is_staff: Boolean(payload.is_staff),
+            is_superuser: Boolean(payload.is_superuser),
+          }
+        : null);
 
     setAccessToken(access);
     setRefreshToken(refresh);
@@ -114,22 +138,7 @@ function App() {
     setIncludeTagDraft("");
     setExcludeTagDraft("");
     setOptimizeMode("balanced");
-    setPreferences({
-      excluded_ingredients: [],
-      preferred_tags: [],
-      excluded_tags: [],
-      max_minutes_default: "",
-      nutrition_defaults: {},
-    });
-    setPrefFields({
-      excluded_ingredients: "",
-      preferred_tags: "",
-      excluded_tags: "",
-      max_minutes_default: "",
-      max_calories: "",
-      min_protein_pdv: "",
-      max_carbs_pdv: "",
-    });
+    setShowParsedModal(false);
   };
 
   const apiFetch = async (path, options = {}, canRetry = true, tokenOverride = null) => {
@@ -172,7 +181,7 @@ function App() {
       try {
         const errData = await response.json();
         message = errData.detail || errData.error || JSON.stringify(errData);
-      } catch (parseError) {
+      } catch (_parseError) {
         // keep fallback message
       }
       throw new Error(message);
@@ -263,6 +272,12 @@ function App() {
   }, [accessToken]);
 
   useEffect(() => {
+    if (!isAdmin && appTab === "admin") {
+      setAppTab("plan");
+    }
+  }, [isAdmin, appTab]);
+
+  useEffect(() => {
     if (savedPlans.length === 0) {
       setSelectedPlanId("");
       return;
@@ -339,6 +354,35 @@ function App() {
     setExcludeTags((prev) => prev.filter((x) => x !== tag));
   };
 
+  const buildGeneratePayload = () => {
+    if (inputMode === "manual") {
+      return {
+        input_mode: "manual",
+        optimize_mode: optimizeMode,
+        manual_query: {
+          num_meals: Number(manualFields.num_meals || 3),
+          ingredient_keywords: fromCsv(manualFields.ingredient_keywords),
+          include_tags: includeTags,
+          exclude_tags: excludeTags,
+          exclude_ingredients: fromCsv(manualFields.exclude_ingredients),
+          max_minutes: manualFields.max_minutes === "" ? null : Number(manualFields.max_minutes),
+          max_calories: manualFields.max_calories === "" ? null : Number(manualFields.max_calories),
+          min_protein_pdv: manualFields.min_protein_pdv === "" ? null : Number(manualFields.min_protein_pdv),
+          max_carbs_pdv: manualFields.max_carbs_pdv === "" ? null : Number(manualFields.max_carbs_pdv),
+          search_text: String(manualFields.search_text || "").trim().toLowerCase(),
+        },
+      };
+    }
+
+    return {
+      input_mode: "prompt",
+      prompt,
+      include_tags: includeTags,
+      exclude_tags: excludeTags,
+      optimize_mode: optimizeMode,
+    };
+  };
+
   const handleGeneratePlan = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -351,18 +395,17 @@ function App() {
     try {
       const data = await apiFetch("/meal-plans/generate/", {
         method: "POST",
-        body: {
-          prompt,
-          include_tags: includeTags,
-          exclude_tags: excludeTags,
-          optimize_mode: optimizeMode,
-        },
+        body: buildGeneratePayload(),
       });
 
       setParsedQuery(data.query || null);
       setRecipes(data.recipes || []);
       setMealPlan(data.meal_plan || null);
       setNotice(data.no_results ? "No results found for current constraints." : "Meal plan generated and saved.");
+
+      if (!isAdmin && data.query) {
+        setShowParsedModal(true);
+      }
 
       await loadSavedPlans();
       if (data.meal_plan?.id) {
@@ -487,12 +530,120 @@ function App() {
     );
   };
 
+  const renderTagControls = () => (
+    <div className="filter-grid">
+      <label className="label">
+        Include tag
+        <div className="inline-control">
+          <select
+            className="input"
+            value={includeTagDraft}
+            onChange={(e) => setIncludeTagDraft(e.target.value)}
+          >
+            <option value="">Select tag</option>
+            {availableTags.map((tag) => (
+              <option key={`inc-${tag}`} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => addTagConstraint("include")}
+          >
+            Add
+          </button>
+        </div>
+      </label>
+
+      <label className="label">
+        Exclude tag
+        <div className="inline-control">
+          <select
+            className="input"
+            value={excludeTagDraft}
+            onChange={(e) => setExcludeTagDraft(e.target.value)}
+          >
+            <option value="">Select tag</option>
+            {availableTags.map((tag) => (
+              <option key={`exc-${tag}`} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => addTagConstraint("exclude")}
+          >
+            Add
+          </button>
+        </div>
+      </label>
+
+      <div className="summary-row">
+        <span className="summary-key">Include tags</span>
+        <div className="chips-row">
+          {includeTags.length === 0 && <span className="chip muted">none</span>}
+          {includeTags.map((tag) => (
+            <button
+              key={`inc-chip-${tag}`}
+              type="button"
+              className="chip removable"
+              onClick={() => removeTagConstraint("include", tag)}
+            >
+              {tag} x
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="summary-row">
+        <span className="summary-key">Exclude tags</span>
+        <div className="chips-row">
+          {excludeTags.length === 0 && <span className="chip muted">none</span>}
+          {excludeTags.map((tag) => (
+            <button
+              key={`exc-chip-${tag}`}
+              type="button"
+              className="chip removable danger-chip"
+              onClick={() => removeTagConstraint("exclude", tag)}
+            >
+              {tag} x
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const parsedSummary = (
+    <div className="summary-block">
+      <div className="summary-row"><span className="summary-key">Meals</span><span>{parsedQuery?.num_meals ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Ingredients</span><span>{toCsv(parsedQuery?.ingredient_keywords) || "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Include tags</span><span>{toCsv(parsedQuery?.include_tags) || "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Exclude tags</span><span>{toCsv(parsedQuery?.exclude_tags) || "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Exclude ingredients</span><span>{toCsv(parsedQuery?.exclude_ingredients) || "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Max minutes</span><span>{parsedQuery?.max_minutes ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Max calories</span><span>{parsedQuery?.max_calories ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Min protein %DV</span><span>{parsedQuery?.min_protein_pdv ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Max carbs %DV</span><span>{parsedQuery?.max_carbs_pdv ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Mode</span><span>{parsedQuery?.input_mode || inputMode}</span></div>
+      <div className="summary-row"><span className="summary-key">Parser</span><span>{parsedQuery?.parser_source || "rules"}</span></div>
+      <div className="summary-row"><span className="summary-key">Optimization</span><span>{parsedQuery?.optimize_mode || optimizeMode}</span></div>
+    </div>
+  );
+
   if (!accessToken) {
     return (
-      <div className="page">
+      <div className="page auth-page">
         <div className="auth-card">
-          <h1>Panion</h1>
-          <p>Sign in to save plans, preferences, and shopping lists.</p>
+          <div className="brand-row">
+            <img src="/PanionLogo.png" alt="Panion logo" className="logo" />
+            <h1>Panion</h1>
+          </div>
+          <p className="hero-copy">Sign in to create, save, and manage meal plans.</p>
 
           <div className="auth-toggle">
             <button
@@ -541,7 +692,7 @@ function App() {
             </button>
           </form>
 
-          {error && <p className="error">{error}</p>}
+          {error && <p className="error-banner">{error}</p>}
         </div>
       </div>
     );
@@ -549,461 +700,526 @@ function App() {
 
   return (
     <div className="page">
-      <div className="card">
-        <header className="topbar">
+      <header className="app-header">
+        <div className="brand-row">
+          <img src="/PanionLogo.png" alt="Panion logo" className="logo" />
           <div>
             <h1 className="title">Panion</h1>
-            <p className="subtitle">AI-assisted meal planning with saved plans, preferences, and shopping lists.</p>
+            <p className="subtitle">Meal planning with prompt + manual criteria, saved plans, and shopping lists.</p>
           </div>
-          <div className="user-actions">
-            <span className="chip">{currentUser?.email}</span>
-            <button type="button" className="button secondary" onClick={clearAuth}>
-              Logout
-            </button>
-          </div>
-        </header>
+        </div>
+        <div className="user-actions">
+          <span className="chip user-chip">{currentUser?.email}</span>
+          <span className={`chip role-chip ${isAdmin ? "admin-role" : "user-role"}`}>{isAdmin ? "Admin" : "User"}</span>
+          <button type="button" className="button secondary" onClick={clearAuth}>Logout</button>
+        </div>
+      </header>
 
-        <nav className="tabs">
-          {[
-            ["plan", "Plan"],
-            ["saved", "Saved Plans"],
-            ["preferences", "Preferences"],
-            ["shopping", "Shopping List"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              className={`button secondary ${appTab === key ? "active-mode" : ""}`}
-              onClick={() => setAppTab(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+      <nav className="tabs">
+        {[
+          ["plan", "Plan"],
+          ["saved", "Saved Plans"],
+          ["preferences", "Preferences"],
+          ["shopping", "Shopping List"],
+          ...(isAdmin ? [["admin", "Admin"]] : []),
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`tab-btn ${appTab === key ? "active" : ""}`}
+            onClick={() => setAppTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-        {(error || notice) && (
-          <div className="status-strip">
-            {error && <span className="error">{error}</span>}
-            {notice && <span className="ok">{notice}</span>}
-          </div>
-        )}
+      {(error || notice) && (
+        <div className="status-strip">
+          {error && <span className="error-banner">{error}</span>}
+          {notice && <span className="ok-banner">{notice}</span>}
+        </div>
+      )}
 
-        {appTab === "plan" && (
-          <div className="layout-grid">
-            <section className="panel">
-              <h2 className="panel-title">Generate Plan</h2>
-              <form className="form" onSubmit={handleGeneratePlan}>
-                <label className="label">
+      {appTab === "plan" && (
+        <div className="layout-grid">
+          <section className="panel">
+            <h2 className="panel-title">Generate Meal Plan</h2>
+            <form className="form" onSubmit={handleGeneratePlan}>
+              <div className="mode-switch">
+                <button
+                  type="button"
+                  className={`button secondary ${inputMode === "prompt" ? "active-mode" : ""}`}
+                  onClick={() => setInputMode("prompt")}
+                >
                   Prompt
-                  <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-                </label>
-                <label className="label">
-                  Optimization mode
-                  <select
-                    className="input"
-                    value={optimizeMode}
-                    onChange={(e) => setOptimizeMode(e.target.value)}
-                  >
-                    <option value="balanced">Balanced</option>
-                    <option value="budget">Budget-first</option>
-                    <option value="sustainability">Sustainability-first</option>
-                  </select>
-                </label>
-                <div className="filter-grid">
-                  <label className="label">
-                    Include tag
-                    <div className="inline-control">
-                      <select
-                        className="input"
-                        value={includeTagDraft}
-                        onChange={(e) => setIncludeTagDraft(e.target.value)}
-                      >
-                        <option value="">Select tag</option>
-                        {availableTags.map((tag) => (
-                          <option key={`inc-${tag}`} value={tag}>
-                            {tag}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="button secondary"
-                        onClick={() => addTagConstraint("include")}
-                      >
-                        Add
-                      </button>
-                    </div>
-                  </label>
-
-                  <label className="label">
-                    Exclude tag
-                    <div className="inline-control">
-                      <select
-                        className="input"
-                        value={excludeTagDraft}
-                        onChange={(e) => setExcludeTagDraft(e.target.value)}
-                      >
-                        <option value="">Select tag</option>
-                        {availableTags.map((tag) => (
-                          <option key={`exc-${tag}`} value={tag}>
-                            {tag}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="button secondary"
-                        onClick={() => addTagConstraint("exclude")}
-                      >
-                        Add
-                      </button>
-                    </div>
-                  </label>
-                </div>
-                <div className="constraint-block">
-                  <div className="summary-row">
-                    <span className="summary-key">Include tags</span>
-                    <div className="chips-row">
-                      {includeTags.length === 0 && <span className="chip muted">none</span>}
-                      {includeTags.map((tag) => (
-                        <button
-                          key={`inc-chip-${tag}`}
-                          type="button"
-                          className="chip removable"
-                          onClick={() => removeTagConstraint("include", tag)}
-                        >
-                          {tag} x
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="summary-row">
-                    <span className="summary-key">Exclude tags</span>
-                    <div className="chips-row">
-                      {excludeTags.length === 0 && <span className="chip muted">none</span>}
-                      {excludeTags.map((tag) => (
-                        <button
-                          key={`exc-chip-${tag}`}
-                          type="button"
-                          className="chip removable danger-chip"
-                          onClick={() => removeTagConstraint("exclude", tag)}
-                        >
-                          {tag} x
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="quick-prompts">
-                  {QUICK_PROMPTS.map((x) => (
-                    <button key={x} type="button" className="quick-prompt" onClick={() => setPrompt(x)}>
-                      {x}
-                    </button>
-                  ))}
-                </div>
-                <div className="toggle-row">
-                  <button className="button" type="submit" disabled={loading}>
-                    {loading ? "Generating..." : "Generate Meal Plan"}
-                  </button>
-                  {mealPlan?.id && (
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() => handleGenerateShoppingList(mealPlan.id)}
-                      disabled={loading}
-                    >
-                      Build Shopping List
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => setShowNutrition((v) => !v)}
-                  >
-                    {showNutrition ? "Hide Nutrition" : "Show Nutrition"}
-                  </button>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => setShowDevInspector((v) => !v)}
-                  >
-                    {showDevInspector ? "Hide Parsed" : "Show Parsed"}
-                  </button>
-                </div>
-              </form>
-            </section>
-
-            <section className="panel">
-              <h2 className="panel-title">Parsed Request</h2>
-              {!parsedQuery && <p className="panel-description">Generate a plan to inspect parser output.</p>}
-              {parsedQuery && (
-                <div className="summary-block">
-                  <div className="summary-row"><span className="summary-key">Meals</span><span>{parsedQuery.num_meals}</span></div>
-                  <div className="summary-row"><span className="summary-key">Ingredients</span><span>{toCsv(parsedQuery.ingredient_keywords) || "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Include tags</span><span>{toCsv(parsedQuery.include_tags) || "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Exclude tags</span><span>{toCsv(parsedQuery.exclude_tags) || "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Exclude ingredients</span><span>{toCsv(parsedQuery.exclude_ingredients) || "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Max minutes</span><span>{parsedQuery.max_minutes ?? "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Max calories</span><span>{parsedQuery.max_calories ?? "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Min protein %DV</span><span>{parsedQuery.min_protein_pdv ?? "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Max carbs %DV</span><span>{parsedQuery.max_carbs_pdv ?? "none"}</span></div>
-                  <div className="summary-row"><span className="summary-key">Optimization</span><span>{parsedQuery.optimize_mode || parsedQuery.fallback?.optimizer?.optimize_mode || optimizeMode}</span></div>
-                  <div className="summary-row"><span className="summary-key">Parser</span><span>{parsedQuery.parser_source || "rules"}</span></div>
-                </div>
-              )}
-
-              {parserWarnings.length > 0 && (
-                <div className="warning-panel">
-                  <strong>Parser warnings</strong>
-                  <ul>
-                    {parserWarnings.map((w, i) => (
-                      <li key={`${w}-${i}`}>{w}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {showDevInspector && (
-                <details className="dev-details" open>
-                  <summary>Developer inspector</summary>
-                  <pre>{JSON.stringify(parsedQuery || { note: "No parsed request yet" }, null, 2)}</pre>
-                </details>
-              )}
-            </section>
-
-            <section className="panel panel-wide">
-              <h2 className="panel-title">Recipes</h2>
-              {!recipes.length && <p className="panel-description">No recipes yet.</p>}
-              <div className="recipe-grid">
-                {recipes.map((recipe) => (
-                  <article key={recipe.id} className="recipe-card">
-                    <h3 className="recipe-title">{recipe.name}</h3>
-                    <div className="recipe-meta">
-                      <span className="chip">{recipe.minutes || "?"} min</span>
-                      <span className="chip">{recipe.n_ingredients ?? "?"} ingredients</span>
-                      <span className="chip">{recipe.n_steps ?? "?"} steps</span>
-                    </div>
-                    <p className="recipe-copy"><strong>Ingredients:</strong> {Array.isArray(recipe.ingredients) ? recipe.ingredients.join(", ") : recipe.ingredients}</p>
-                    <div className="recipe-copy">
-                      <strong>Instructions:</strong>
-                      {Array.isArray(recipe.instructions) && recipe.instructions.length > 0 ? (
-                        <ol>
-                          {recipe.instructions.map((step, idx) => (
-                            <li key={`${recipe.id}-${idx}`}>{step}</li>
-                          ))}
-                        </ol>
-                      ) : (
-                        <p>No steps in list view.</p>
-                      )}
-                    </div>
-                    {showNutrition && formatNutrition(recipe)}
-                  </article>
-                ))}
+                </button>
+                <button
+                  type="button"
+                  className={`button secondary ${inputMode === "manual" ? "active-mode" : ""}`}
+                  onClick={() => setInputMode("manual")}
+                >
+                  Manual Criteria
+                </button>
               </div>
-            </section>
-          </div>
-        )}
 
-        {appTab === "saved" && (
-          <div className="layout-grid two-col">
-            <section className="panel">
-              <h2 className="panel-title">Saved Plans</h2>
-              <button type="button" className="button secondary" onClick={loadSavedPlans} disabled={loading}>
-                Refresh
-              </button>
-              <div className="list-block">
-                {savedPlans.length === 0 && <p className="panel-description">No saved plans yet.</p>}
-                {savedPlans.map((plan) => (
-                  <div key={plan.id} className={`list-item ${selectedPlanId === String(plan.id) ? "selected" : ""}`}>
-                    <div>
-                      <strong>{plan.title}</strong>
-                      <div className="panel-description">{new Date(plan.created_at).toLocaleString()}</div>
-                    </div>
-                    <div className="row-actions">
-                      <button type="button" className="button secondary" onClick={() => loadPlanDetail(plan.id)}>
-                        Open
-                      </button>
-                      <button type="button" className="button secondary" onClick={() => handleGenerateShoppingList(plan.id)}>
-                        Shop
-                      </button>
-                      <button type="button" className="button secondary" onClick={() => handleDeletePlan(plan.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="panel">
-              <h2 className="panel-title">Plan Detail</h2>
-              {!selectedPlan && <p className="panel-description">Select a plan to see details.</p>}
-              {selectedPlan && (
+              {inputMode === "prompt" ? (
                 <>
-                  <p><strong>{selectedPlan.title}</strong></p>
-                  <p className="panel-description">Prompt: {selectedPlan.source_prompt}</p>
-                  <div className="list-block">
-                    {(selectedPlan.items || []).map((item) => (
-                      <div key={item.position} className="list-item compact">
-                        <div>
-                          <strong>#{item.position}</strong> {item.recipe_name}
-                        </div>
-                        <button
-                          type="button"
-                          className="button secondary"
-                          onClick={() => handleSwapMeal(item.position)}
-                        >
-                          Swap
-                        </button>
-                      </div>
+                  <label className="label">
+                    Prompt
+                    <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+                  </label>
+                  <div className="quick-prompts">
+                    {QUICK_PROMPTS.map((x) => (
+                      <button key={x} type="button" className="quick-prompt" onClick={() => setPrompt(x)}>
+                        {x}
+                      </button>
                     ))}
                   </div>
                 </>
+              ) : (
+                <div className="filter-grid">
+                  <label className="label">
+                    Meals
+                    <input
+                      className="input"
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={manualFields.num_meals}
+                      onChange={(e) => setManualFields((p) => ({ ...p, num_meals: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Ingredients (comma-separated)
+                    <input
+                      className="input"
+                      value={manualFields.ingredient_keywords}
+                      onChange={(e) => setManualFields((p) => ({ ...p, ingredient_keywords: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Exclude ingredients (comma-separated)
+                    <input
+                      className="input"
+                      value={manualFields.exclude_ingredients}
+                      onChange={(e) => setManualFields((p) => ({ ...p, exclude_ingredients: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Search text
+                    <input
+                      className="input"
+                      value={manualFields.search_text}
+                      onChange={(e) => setManualFields((p) => ({ ...p, search_text: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Max minutes
+                    <input
+                      className="input"
+                      type="number"
+                      min="1"
+                      value={manualFields.max_minutes}
+                      onChange={(e) => setManualFields((p) => ({ ...p, max_minutes: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Max calories
+                    <input
+                      className="input"
+                      type="number"
+                      min="0"
+                      value={manualFields.max_calories}
+                      onChange={(e) => setManualFields((p) => ({ ...p, max_calories: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Min protein %DV
+                    <input
+                      className="input"
+                      type="number"
+                      min="0"
+                      value={manualFields.min_protein_pdv}
+                      onChange={(e) => setManualFields((p) => ({ ...p, min_protein_pdv: e.target.value }))}
+                    />
+                  </label>
+                  <label className="label">
+                    Max carbs %DV
+                    <input
+                      className="input"
+                      type="number"
+                      min="0"
+                      value={manualFields.max_carbs_pdv}
+                      onChange={(e) => setManualFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
+                    />
+                  </label>
+                </div>
               )}
-            </section>
-          </div>
-        )}
 
-        {appTab === "preferences" && (
-          <section className="panel">
-            <h2 className="panel-title">Preferences</h2>
-            <form className="form" onSubmit={handleSavePreferences}>
-              <div className="filter-grid">
-                <label className="label">
-                  Excluded ingredients (comma-separated)
-                  <input
-                    className="input"
-                    value={prefFields.excluded_ingredients}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, excluded_ingredients: e.target.value }))}
-                  />
-                </label>
-                <label className="label">
-                  Preferred tags
-                  <input
-                    className="input"
-                    value={prefFields.preferred_tags}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, preferred_tags: e.target.value }))}
-                  />
-                </label>
-                <label className="label">
-                  Excluded tags
-                  <input
-                    className="input"
-                    value={prefFields.excluded_tags}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, excluded_tags: e.target.value }))}
-                  />
-                </label>
-                <label className="label">
-                  Default max minutes
-                  <input
-                    className="input"
-                    type="number"
-                    min="1"
-                    value={prefFields.max_minutes_default}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, max_minutes_default: e.target.value }))}
-                  />
-                </label>
-                <label className="label">
-                  Default max calories
-                  <input
-                    className="input"
-                    type="number"
-                    min="0"
-                    value={prefFields.max_calories}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, max_calories: e.target.value }))}
-                  />
-                </label>
-                <label className="label">
-                  Default min protein %DV
-                  <input
-                    className="input"
-                    type="number"
-                    min="0"
-                    value={prefFields.min_protein_pdv}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, min_protein_pdv: e.target.value }))}
-                  />
-                </label>
-                <label className="label">
-                  Default max carbs %DV
-                  <input
-                    className="input"
-                    type="number"
-                    min="0"
-                    value={prefFields.max_carbs_pdv}
-                    onChange={(e) => setPrefFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
-                  />
-                </label>
-              </div>
-              <button className="button" type="submit" disabled={loading}>
-                Save Preferences
-              </button>
-            </form>
-
-            {showDevInspector && (
-              <details className="dev-details">
-                <summary>Current preference payload</summary>
-                <pre>{JSON.stringify(preferences, null, 2)}</pre>
-              </details>
-            )}
-          </section>
-        )}
-
-        {appTab === "shopping" && (
-          <section className="panel">
-            <h2 className="panel-title">Shopping List</h2>
-            <div className="inline-form">
               <label className="label">
-                Meal plan
+                Optimization mode
                 <select
                   className="input"
-                  value={selectedPlanId}
-                  onChange={(e) => setSelectedPlanId(e.target.value)}
+                  value={optimizeMode}
+                  onChange={(e) => setOptimizeMode(e.target.value)}
                 >
-                  {savedPlans.length === 0 && <option value="">No plans available</option>}
-                  {savedPlans.map((plan) => (
-                    <option key={`shop-plan-${plan.id}`} value={plan.id}>
-                      {plan.title} (ID {plan.id})
-                    </option>
-                  ))}
+                  <option value="balanced">Balanced</option>
+                  <option value="budget">Budget-first</option>
+                  <option value="sustainability">Sustainability-first</option>
                 </select>
               </label>
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => loadShoppingList(selectedPlanId)}
-                disabled={loading || !selectedPlanId}
-              >
-                Load
-              </button>
-              <button
-                type="button"
-                className="button"
-                onClick={() => handleGenerateShoppingList(selectedPlanId)}
-                disabled={loading || !selectedPlanId}
-              >
-                Regenerate
-              </button>
-            </div>
 
-            {!shoppingList && <p className="panel-description">Load or generate a shopping list for a meal plan.</p>}
-            {shoppingList && (
-              <div className="list-block">
-                {(shoppingList.items || []).map((item) => (
-                  <div key={item.ingredient} className="list-item compact">
-                    <div>
-                      <span>{item.ingredient}</span>
-                      {Array.isArray(item.variants) && item.variants.length > 1 && (
-                        <div className="panel-description">From: {item.variants.join(", ")}</div>
-                      )}
-                    </div>
-                    <strong>x{item.count}</strong>
-                  </div>
-                ))}
+              {renderTagControls()}
+
+              <div className="toggle-row">
+                <button className="button" type="submit" disabled={loading}>
+                  {loading ? "Generating..." : "Generate Meal Plan"}
+                </button>
+                {mealPlan?.id && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => handleGenerateShoppingList(mealPlan.id)}
+                    disabled={loading}
+                  >
+                    Build Shopping List
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setShowNutrition((v) => !v)}
+                >
+                  {showNutrition ? "Hide Nutrition" : "Show Nutrition"}
+                </button>
+                {!isAdmin && parsedQuery && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setShowParsedModal(true)}
+                  >
+                    View Parsed Criteria
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setAppTab("admin")}
+                  >
+                    Open Admin Tools
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+
+          <section className="panel">
+            <h2 className="panel-title">Parsed Request</h2>
+            {!parsedQuery && <p className="panel-description">Generate a plan to inspect parsed criteria.</p>}
+            {parsedQuery && parsedSummary}
+
+            {parserWarnings.length > 0 && (
+              <div className="warning-panel">
+                <strong>Parser warnings</strong>
+                <ul>
+                  {parserWarnings.map((w, i) => (
+                    <li key={`${w}-${i}`}>{w}</li>
+                  ))}
+                </ul>
               </div>
             )}
+
           </section>
-        )}
-      </div>
+
+          <section className="panel panel-wide">
+            <h2 className="panel-title">Recipes</h2>
+            {!recipes.length && <p className="panel-description">No recipes yet.</p>}
+            <div className="recipe-grid">
+              {recipes.map((recipe) => (
+                <article key={recipe.id} className="recipe-card">
+                  <h3 className="recipe-title">{recipe.name}</h3>
+                  <div className="recipe-meta">
+                    <span className="chip">{recipe.minutes || "?"} min</span>
+                    <span className="chip">{recipe.n_ingredients ?? "?"} ingredients</span>
+                    <span className="chip">{recipe.n_steps ?? "?"} steps</span>
+                  </div>
+                  <p className="recipe-copy"><strong>Ingredients:</strong> {Array.isArray(recipe.ingredients) ? recipe.ingredients.join(", ") : recipe.ingredients}</p>
+                  <div className="recipe-copy">
+                    <strong>Instructions:</strong>
+                    {Array.isArray(recipe.instructions) && recipe.instructions.length > 0 ? (
+                      <ol>
+                        {recipe.instructions.map((step, idx) => (
+                          <li key={`${recipe.id}-${idx}`}>{step}</li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p>No steps in list view.</p>
+                    )}
+                  </div>
+                  {showNutrition && formatNutrition(recipe)}
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {appTab === "saved" && (
+        <div className="layout-grid two-col">
+          <section className="panel">
+            <h2 className="panel-title">Saved Plans</h2>
+            <button type="button" className="button secondary" onClick={loadSavedPlans} disabled={loading}>
+              Refresh
+            </button>
+            <div className="list-block">
+              {savedPlans.length === 0 && <p className="panel-description">No saved plans yet.</p>}
+              {savedPlans.map((plan) => (
+                <div key={plan.id} className={`list-item ${selectedPlanId === String(plan.id) ? "selected" : ""}`}>
+                  <div>
+                    <strong>{plan.title}</strong>
+                    <div className="panel-description">{new Date(plan.created_at).toLocaleString()}</div>
+                  </div>
+                  <div className="row-actions">
+                    <button type="button" className="button secondary" onClick={() => loadPlanDetail(plan.id)}>
+                      Open
+                    </button>
+                    <button type="button" className="button secondary" onClick={() => handleGenerateShoppingList(plan.id)}>
+                      Shop
+                    </button>
+                    <button type="button" className="button secondary" onClick={() => handleDeletePlan(plan.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2 className="panel-title">Plan Detail</h2>
+            {!selectedPlan && <p className="panel-description">Select a plan to see details.</p>}
+            {selectedPlan && (
+              <>
+                <p><strong>{selectedPlan.title}</strong></p>
+                <p className="panel-description">Prompt: {selectedPlan.source_prompt}</p>
+                <div className="list-block">
+                  {(selectedPlan.items || []).map((item) => (
+                    <div key={item.position} className="list-item compact">
+                      <div>
+                        <strong>#{item.position}</strong> {item.recipe_name}
+                      </div>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => handleSwapMeal(item.position)}
+                      >
+                        Swap
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
+
+      {appTab === "preferences" && (
+        <section className="panel">
+          <h2 className="panel-title">Preferences</h2>
+          <form className="form" onSubmit={handleSavePreferences}>
+            <div className="filter-grid">
+              <label className="label">
+                Excluded ingredients (comma-separated)
+                <input
+                  className="input"
+                  value={prefFields.excluded_ingredients}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, excluded_ingredients: e.target.value }))}
+                />
+              </label>
+              <label className="label">
+                Preferred tags
+                <input
+                  className="input"
+                  value={prefFields.preferred_tags}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, preferred_tags: e.target.value }))}
+                />
+              </label>
+              <label className="label">
+                Excluded tags
+                <input
+                  className="input"
+                  value={prefFields.excluded_tags}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, excluded_tags: e.target.value }))}
+                />
+              </label>
+              <label className="label">
+                Default max minutes
+                <input
+                  className="input"
+                  type="number"
+                  min="1"
+                  value={prefFields.max_minutes_default}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, max_minutes_default: e.target.value }))}
+                />
+              </label>
+              <label className="label">
+                Default max calories
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  value={prefFields.max_calories}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, max_calories: e.target.value }))}
+                />
+              </label>
+              <label className="label">
+                Default min protein %DV
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  value={prefFields.min_protein_pdv}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, min_protein_pdv: e.target.value }))}
+                />
+              </label>
+              <label className="label">
+                Default max carbs %DV
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  value={prefFields.max_carbs_pdv}
+                  onChange={(e) => setPrefFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
+                />
+              </label>
+            </div>
+            <button className="button" type="submit" disabled={loading}>
+              Save Preferences
+            </button>
+          </form>
+
+        </section>
+      )}
+
+      {appTab === "shopping" && (
+        <section className="panel">
+          <h2 className="panel-title">Shopping List</h2>
+          <div className="inline-form">
+            <label className="label">
+              Meal plan
+              <select
+                className="input"
+                value={selectedPlanId}
+                onChange={(e) => setSelectedPlanId(e.target.value)}
+              >
+                {savedPlans.length === 0 && <option value="">No plans available</option>}
+                {savedPlans.map((plan) => (
+                  <option key={`shop-plan-${plan.id}`} value={plan.id}>
+                    {plan.title} (ID {plan.id})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => loadShoppingList(selectedPlanId)}
+              disabled={loading || !selectedPlanId}
+            >
+              Load
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={() => handleGenerateShoppingList(selectedPlanId)}
+              disabled={loading || !selectedPlanId}
+            >
+              Regenerate
+            </button>
+          </div>
+
+          {!shoppingList && <p className="panel-description">Load or generate a shopping list for a meal plan.</p>}
+          {shoppingList && (
+            <div className="list-block">
+              {(shoppingList.items || []).map((item) => (
+                <div key={item.ingredient} className="list-item compact">
+                  <div>
+                    <span>{item.ingredient}</span>
+                    {Array.isArray(item.variants) && item.variants.length > 1 && (
+                      <div className="panel-description">From: {item.variants.join(", ")}</div>
+                    )}
+                  </div>
+                  <strong>x{item.count}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {isAdmin && appTab === "admin" && (
+        <div className="layout-grid two-col">
+          <section className="panel">
+            <h2 className="panel-title">Admin Diagnostics</h2>
+            <p className="panel-description">Developer-level diagnostics for parser and generation flow.</p>
+            <div className="summary-block">
+              <div className="summary-row"><span className="summary-key">Current user</span><span>{currentUser?.email || "none"}</span></div>
+              <div className="summary-row"><span className="summary-key">Role</span><span>{currentUser?.is_superuser ? "superuser" : "staff"}</span></div>
+              <div className="summary-row"><span className="summary-key">Latest input mode</span><span>{parsedQuery?.input_mode || "none"}</span></div>
+              <div className="summary-row"><span className="summary-key">Latest parser</span><span>{parsedQuery?.parser_source || "none"}</span></div>
+              <div className="summary-row"><span className="summary-key">Warnings</span><span>{parserWarnings.length}</span></div>
+              <div className="summary-row"><span className="summary-key">Saved plans</span><span>{savedPlans.length}</span></div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2 className="panel-title">Inspector Panels</h2>
+            <details className="dev-details" open>
+              <summary>Parsed query payload</summary>
+              <pre>{JSON.stringify(parsedQuery || { note: "No parsed request yet" }, null, 2)}</pre>
+            </details>
+            <details className="dev-details">
+              <summary>Optimizer fallback payload</summary>
+              <pre>{JSON.stringify(parsedQuery?.fallback || { note: "No fallback payload yet" }, null, 2)}</pre>
+            </details>
+            <details className="dev-details">
+              <summary>Current preference payload</summary>
+              <pre>{JSON.stringify(preferences, null, 2)}</pre>
+            </details>
+            <details className="dev-details">
+              <summary>Selected plan payload</summary>
+              <pre>{JSON.stringify(selectedPlan || { note: "No selected plan" }, null, 2)}</pre>
+            </details>
+          </section>
+        </div>
+      )}
+
+      {!isAdmin && showParsedModal && parsedQuery && (
+        <div className="modal-overlay" onClick={() => setShowParsedModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Parsed Criteria</h3>
+              <button type="button" className="button secondary" onClick={() => setShowParsedModal(false)}>
+                Close
+              </button>
+            </div>
+            {parsedSummary}
+            {parserWarnings.length > 0 && (
+              <div className="warning-panel">
+                <strong>Warnings</strong>
+                <ul>
+                  {parserWarnings.map((w, i) => (
+                    <li key={`${w}-modal-${i}`}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
