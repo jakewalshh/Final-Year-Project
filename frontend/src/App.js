@@ -120,6 +120,43 @@ const formatInstructionStep = (step) => {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 };
 
+const toMoney = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.00";
+  return n.toFixed(2);
+};
+
+const buildShoppingListExportText = (shoppingList, planLabel = "") => {
+  const items = Array.isArray(shoppingList?.items) ? shoppingList.items : [];
+  const currency = shoppingList?.cost_summary?.currency || "EUR";
+  const total = toMoney(shoppingList?.cost_summary?.estimated_total ?? 0);
+  const source = shoppingList?.estimate_source || "rules";
+  const notes = String(shoppingList?.cost_summary?.notes || "").trim();
+  const heading = planLabel ? `Panion Shopping List - ${planLabel}` : "Panion Shopping List";
+
+  const lines = [
+    heading,
+    `Estimated Total: ${currency} ${total} (rough estimate, source: ${source})`,
+    "",
+    "Items",
+  ];
+
+  for (const item of items) {
+    const ingredient = capitalizeFirstLetter(item?.ingredient || "Unknown item");
+    const count = Number(item?.count) || 1;
+    const subtotal = toMoney(item?.estimated_subtotal ?? 0);
+    const unit = toMoney(item?.estimated_unit_cost ?? 0);
+    lines.push(`- [ ] ${ingredient} x${count} (${currency} ${unit} each, ~${currency} ${subtotal})`);
+  }
+
+  if (notes) {
+    lines.push("");
+    lines.push(`Notes: ${notes}`);
+  }
+
+  return lines.join("\n");
+};
+
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -654,6 +691,35 @@ function App() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCopyShoppingList = async () => {
+    if (!shoppingList) return;
+    const selectedPlanLabel =
+      savedPlans.find((plan) => String(plan.id) === String(selectedPlanId))?.title || `Plan ${selectedPlanId}`;
+    const exportText = buildShoppingListExportText(shoppingList, selectedPlanLabel);
+
+    try {
+      await navigator.clipboard.writeText(exportText);
+      setNotice("Shopping list copied. Paste it into Notes or your preferred app.");
+      setError("");
+    } catch (_err) {
+      try {
+        const textArea = document.createElement("textarea");
+        textArea.value = exportText;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+        setNotice("Shopping list copied. Paste it into Notes or your preferred app.");
+        setError("");
+      } catch (_fallbackErr) {
+        setError("Could not copy automatically. Please copy manually.");
+      }
     }
   };
 
@@ -1509,8 +1575,15 @@ function App() {
 
           {!shoppingList && <p className="panel-description">Load or generate a shopping list for a meal plan.</p>}
           {shoppingList && (
-            <div className="list-block">
-              <div className="list-item">
+            <div className="list-block shopping-list-shell">
+              <div className="shopping-toolbar">
+                <span className="panel-description">Copy as clean checklist for Notes/Reminders.</span>
+                <button type="button" className="button secondary" onClick={handleCopyShoppingList}>
+                  Copy List
+                </button>
+              </div>
+
+              <div className="list-item shopping-summary-card">
                 <div>
                   <strong>Estimated Total</strong>
                   <div className="panel-description">
@@ -1524,18 +1597,21 @@ function App() {
                   {shoppingList.cost_summary?.currency || "EUR"} {shoppingList.cost_summary?.estimated_total ?? "0.00"}
                 </strong>
               </div>
-              {(shoppingList.items || []).map((item) => (
-                <div key={item.ingredient} className="list-item compact">
-                  <div>
-                    <span>{item.ingredient}</span>
+              {(shoppingList.items || []).map((item, idx) => (
+                <div key={`${item.ingredient}-${idx}`} className="list-item compact shopping-item-row">
+                  <div className="shopping-item-main">
+                    <span className="shopping-check">[ ]</span>
+                    <span className="shopping-ingredient">{capitalizeFirstLetter(item.ingredient)}</span>
+                  </div>
+                  <div className="shopping-item-meta">
                     {Array.isArray(item.variants) && item.variants.length > 1 && (
                       <div className="panel-description">From: {item.variants.join(", ")}</div>
                     )}
                     <div className="panel-description">
-                      Est: {(item.currency || "EUR")} {item.estimated_unit_cost ?? 0} each
+                      Est: {(item.currency || "EUR")} {toMoney(item.estimated_unit_cost ?? 0)} each
                     </div>
                   </div>
-                  <strong>x{item.count} | {(item.currency || "EUR")} {item.estimated_subtotal ?? 0}</strong>
+                  <strong>x{item.count} | {(item.currency || "EUR")} {toMoney(item.estimated_subtotal ?? 0)}</strong>
                 </div>
               ))}
             </div>
