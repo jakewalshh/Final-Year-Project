@@ -22,6 +22,90 @@ const fromCsv = (value) =>
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
 
+const TITLE_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "as",
+  "at",
+  "by",
+  "for",
+  "from",
+  "in",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "with",
+]);
+
+const ACRONYM_MAP = {
+  bbq: "BBQ",
+  blt: "BLT",
+  ai: "AI",
+};
+
+const normalizeText = (value) =>
+  String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+,/g, ",")
+    .replace(/\s+\./g, ".")
+    .replace(/\s+!/g, "!")
+    .replace(/\s+\?/g, "?")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .trim();
+
+const capitalizeFirstLetter = (value) => {
+  const text = normalizeText(value);
+  if (!text) return "";
+  const idx = text.search(/[a-zA-Z]/);
+  if (idx < 0) return text;
+  return `${text.slice(0, idx)}${text[idx].toUpperCase()}${text.slice(idx + 1)}`;
+};
+
+const formatRecipeTitle = (value) => {
+  const text = normalizeText(value);
+  if (!text) return "";
+  const words = text.toLowerCase().split(" ");
+  return words
+    .map((word, idx) => {
+      if (ACRONYM_MAP[word]) return ACRONYM_MAP[word];
+      if (word.includes("'")) {
+        return word
+          .split("'")
+          .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
+          .join("'");
+      }
+      if (TITLE_STOP_WORDS.has(word) && idx > 0 && idx < words.length - 1) {
+        return word;
+      }
+      return `${word[0]?.toUpperCase() || ""}${word.slice(1)}`;
+    })
+    .join(" ");
+};
+
+const formatIngredientList = (ingredients) => {
+  if (Array.isArray(ingredients)) {
+    return ingredients
+      .map((item) => capitalizeFirstLetter(item))
+      .filter(Boolean)
+      .join(", ");
+  }
+  return String(ingredients || "")
+    .split(",")
+    .map((item) => capitalizeFirstLetter(item))
+    .filter(Boolean)
+    .join(", ");
+};
+
+const formatInstructionStep = (step) => {
+  const text = capitalizeFirstLetter(step);
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+};
+
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -960,19 +1044,19 @@ function App() {
             <div className="recipe-grid">
               {recipes.map((recipe) => (
                 <article key={recipe.id} className="recipe-card">
-                  <h3 className="recipe-title">{recipe.name}</h3>
+                  <h3 className="recipe-title">{formatRecipeTitle(recipe.name)}</h3>
                   <div className="recipe-meta">
                     <span className="chip">{recipe.minutes || "?"} min</span>
                     <span className="chip">{recipe.n_ingredients ?? "?"} ingredients</span>
                     <span className="chip">{recipe.n_steps ?? "?"} steps</span>
                   </div>
-                  <p className="recipe-copy"><strong>Ingredients:</strong> {Array.isArray(recipe.ingredients) ? recipe.ingredients.join(", ") : recipe.ingredients}</p>
+                  <p className="recipe-copy"><strong>Ingredients:</strong> {formatIngredientList(recipe.ingredients)}</p>
                   <div className="recipe-copy">
                     <strong>Instructions:</strong>
                     {Array.isArray(recipe.instructions) && recipe.instructions.length > 0 ? (
                       <ol>
                         {recipe.instructions.map((step, idx) => (
-                          <li key={`${recipe.id}-${idx}`}>{step}</li>
+                          <li key={`${recipe.id}-${idx}`}>{formatInstructionStep(step)}</li>
                         ))}
                       </ol>
                     ) : (
