@@ -8,6 +8,7 @@ from .views import (
     MealPlanListView,
     MeView,
     PreferenceView,
+    RateMealView,
     RegisterView,
     ShoppingListView,
     SwapMealView,
@@ -27,5 +28,6 @@ urlpatterns = [
     path("meal-plans/", MealPlanListView.as_view(), name="meal-plan-list"),
     path("meal-plans/<int:plan_id>/", MealPlanDetailView.as_view(), name="meal-plan-detail"),
     path("meal-plans/<int:plan_id>/swap/", SwapMealView.as_view(), name="meal-plan-swap"),
+    path("meal-plans/<int:plan_id>/rate/", RateMealView.as_view(), name="meal-plan-rate"),
     path("meal-plans/<int:plan_id>/shopping-list/", ShoppingListView.as_view(), name="shopping-list"),
 ]

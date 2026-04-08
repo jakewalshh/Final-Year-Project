@@ -213,12 +213,11 @@ class PlannerApiTests(APITestCase):
     def test_openai_condenser_keeps_salt_and_pepper_split(self):
         class _FakeMessage:
             content = (
-                '{"normalized_items": ['
-                '{"source": "salt and pepper", "canonical": ["salt", "pepper"]},'
-                '{"source": "salt", "canonical": ["salt"]},'
-                '{"source": "chicken breast", "canonical": ["chicken"]},'
-                '{"source": "chichken thighs", "canonical": ["chicken"]}'
-                "]}"
+                '{"items": ['
+                '{"ingredient":"salt","count":2,"variants":["salt and pepper","salt"],"estimated_unit_cost":0.10,"estimated_subtotal":0.20,"currency":"EUR","confidence":0.8},'
+                '{"ingredient":"pepper","count":1,"variants":["salt and pepper"],"estimated_unit_cost":0.30,"estimated_subtotal":0.30,"currency":"EUR","confidence":0.8},'
+                '{"ingredient":"chicken","count":2,"variants":["chicken breast","chichken thighs"],"estimated_unit_cost":2.50,"estimated_subtotal":5.00,"currency":"EUR","confidence":0.9}'
+                '], "cost_summary":{"estimated_total":5.50,"currency":"EUR","notes":"rough"}}'
             )
 
         class _FakeChoice:
@@ -244,10 +243,113 @@ class PlannerApiTests(APITestCase):
             "gpt-4o-mini",
         )
         self.assertIsNotNone(items)
-        item_map = {item["ingredient"]: item for item in items}
+        self.assertEqual(items["estimate_source"], "openai")
+        self.assertIn("cost_summary", items)
+        item_map = {item["ingredient"]: item for item in items["items"]}
         self.assertEqual(item_map["salt"]["count"], 2)
         self.assertEqual(item_map["pepper"]["count"], 1)
         self.assertEqual(item_map["chicken"]["count"], 2)
+        self.assertGreater(items["cost_summary"]["estimated_total"], 0)
+
+    def test_rate_meal_and_plan_completion(self):
+        self._register_and_login()
+
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {"prompt": "Create 2 vegetarian meals with tofu"},
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        plan_id = gen_resp.data["meal_plan"]["id"]
+
+        plan_detail = self.client.get(reverse("meal-plan-detail", args=[plan_id]))
+        self.assertEqual(plan_detail.status_code, 200)
+        total_count = len(plan_detail.data["items"])
+        self.assertGreaterEqual(total_count, 1)
+
+        for item in plan_detail.data["items"]:
+            rate_resp = self.client.post(
+                reverse("meal-plan-rate", args=[plan_id]),
+                {"position": item["position"], "rating": 4, "feedback_note": "good"},
+                format="json",
+            )
+            self.assertEqual(rate_resp.status_code, 200)
+
+        final_detail = self.client.get(reverse("meal-plan-detail", args=[plan_id]))
+        self.assertEqual(final_detail.status_code, 200)
+        self.assertEqual(final_detail.data["rated_count"], final_detail.data["total_count"])
+        self.assertTrue(final_detail.data["is_completed"])
+
+    def test_rate_meal_rejects_invalid_rating(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {"prompt": "Create 1 vegetarian meal with tofu"},
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        plan_id = gen_resp.data["meal_plan"]["id"]
+        rate_resp = self.client.post(
+            reverse("meal-plan-rate", args=[plan_id]),
+            {"position": 1, "rating": 6},
+            format="json",
+        )
+        self.assertEqual(rate_resp.status_code, 400)
+
+    def test_rate_meal_blocks_other_user_plan(self):
+        owner = User.objects.create_user(
+            username="owner@example.com",
+            email="owner@example.com",
+            password="StrongPass123!",
+        )
+        recipe = Recipe.objects.create(
+            name="Owner Meal",
+            ingredients="tofu, rice",
+            instructions="Cook",
+            minutes=20,
+            external_id=32910,
+        )
+        owner_plan = MealPlan.objects.create(
+            user=owner,
+            title="Owner Plan",
+            source_prompt="owner",
+            parsed_query={"num_meals": 1},
+        )
+        MealPlanItem.objects.create(meal_plan=owner_plan, position=1, recipe=recipe)
+
+        self._register_and_login()
+        rate_resp = self.client.post(
+            reverse("meal-plan-rate", args=[owner_plan.id]),
+            {"position": 1, "rating": 3},
+            format="json",
+        )
+        self.assertEqual(rate_resp.status_code, 404)
+
+    def test_optimizer_applies_soft_rating_weight(self):
+        low = Recipe.objects.create(
+            name="Chicken Tray Bake Low",
+            ingredients="chicken, potato, onion",
+            instructions="Cook",
+            minutes=25,
+            external_id=32901,
+        )
+        high = Recipe.objects.create(
+            name="Chicken Tray Bake High",
+            ingredients="chicken, potato, onion",
+            instructions="Cook",
+            minutes=25,
+            external_id=32902,
+        )
+
+        selected, _ = _select_optimized_recipes(
+            [low, high],
+            {"num_meals": 1, "ingredient_keywords": ["chicken"]},
+            optimize_mode="balanced",
+            random_seed=3,
+            recipe_rating_map={low.id: 1.0, high.id: 5.0},
+        )
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0].id, high.id)
 
     def test_optimizer_prefers_anchor_protein(self):
         chicken_1 = Recipe.objects.create(

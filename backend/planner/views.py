@@ -3,12 +3,14 @@ import json
 import os
 import random
 import re
+from collections import defaultdict
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.db.models import Count, Prefetch
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,7 +26,7 @@ from .serializers import (
     MealPlanListSerializer,
     MealPlanSerializer,
     RegisterSerializer,
-    ShoppingListSerializer,
+    RateMealSerializer,
     SwapMealSerializer,
     UserPreferenceSerializer,
     UserSummarySerializer,
@@ -65,6 +67,15 @@ def _to_optional_int(value) -> int | None:
         if value is None or value == "":
             return None
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_optional_float(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
     except (TypeError, ValueError):
         return None
 
@@ -568,11 +579,47 @@ def _diversity_penalty(candidate_terms: set[str], selected_profiles: list[dict],
     return penalty
 
 
+RATING_ADJUSTMENT_MAP = {
+    1: -0.20,
+    2: -0.06,
+    3: 0.0,
+    4: 0.03,
+    5: 0.07,
+}
+
+
+def _rating_adjustment_for_recipe(recipe_id: int, recipe_rating_map: dict[int, float] | None) -> float:
+    if not recipe_rating_map:
+        return 0.0
+    avg_rating = recipe_rating_map.get(recipe_id)
+    if avg_rating is None:
+        return 0.0
+    rounded = int(round(avg_rating))
+    return RATING_ADJUSTMENT_MAP.get(rounded, 0.0)
+
+
+def _user_recipe_rating_map(user) -> dict[int, float]:
+    ratings_by_recipe: dict[int, list[int]] = defaultdict(list)
+    rated_rows = MealPlanItem.objects.filter(
+        meal_plan__user=user,
+        rating__isnull=False,
+    ).values_list("recipe_id", "rating")
+    for recipe_id, rating in rated_rows:
+        ratings_by_recipe[recipe_id].append(int(rating))
+
+    output: dict[int, float] = {}
+    for recipe_id, ratings in ratings_by_recipe.items():
+        if ratings:
+            output[recipe_id] = sum(ratings) / len(ratings)
+    return output
+
+
 def _select_optimized_recipes(
     candidates: list[Recipe],
     parsed_query: dict,
     optimize_mode: str = "balanced",
     random_seed: int | None = None,
+    recipe_rating_map: dict[int, float] | None = None,
 ) -> tuple[list[Recipe], dict]:
     target_count = _to_int(parsed_query.get("num_meals"), 3)
     target_count = max(1, target_count)
@@ -633,10 +680,11 @@ def _select_optimized_recipes(
                 penalty_scale=diversity_penalty_scale,
             )
             base_score = profile["metrics"]["base"]
+            rating_adjustment = _rating_adjustment_for_recipe(profile["recipe"].id, recipe_rating_map)
             if selected_profiles:
-                combined = (base_weight * base_score) + (overlap_weight * overlap) - penalty
+                combined = (base_weight * base_score) + (overlap_weight * overlap) - penalty + rating_adjustment
             else:
-                combined = base_score
+                combined = base_score + rating_adjustment
             combined = _clamp_float(combined, -1.0, 1.0)
             scored_items.append(
                 {
@@ -644,6 +692,7 @@ def _select_optimized_recipes(
                     "profile": profile,
                     "combined": combined,
                     "base": base_score,
+                    "rating_adjustment": rating_adjustment,
                     "overlap": overlap,
                     "diversity_penalty": penalty,
                 }
@@ -661,6 +710,7 @@ def _select_optimized_recipes(
         best_meta = {
             "recipe_id": chosen_item["profile"]["recipe"].id,
             "base": round(chosen_item["base"], 4),
+            "rating_adjustment": round(chosen_item["rating_adjustment"], 4),
             "overlap": round(chosen_item["overlap"], 4),
             "diversity_penalty": round(chosen_item["diversity_penalty"], 4),
             "combined": round(chosen_item["combined"], 4),
@@ -725,6 +775,7 @@ def _query_with_fallbacks(
     parsed_query: dict,
     optimize_mode: str = "balanced",
     selection_seed: int | None = None,
+    recipe_rating_map: dict[int, float] | None = None,
 ) -> tuple[list, dict]:
     attempts = []
     base = dict(parsed_query)
@@ -746,6 +797,7 @@ def _query_with_fallbacks(
             query_payload,
             optimize_mode=optimize_mode,
             random_seed=stage_seed,
+            recipe_rating_map=recipe_rating_map,
         )
         attempts.append(
             {
@@ -881,6 +933,39 @@ def _collect_plan_ingredient_names(meal_plan: MealPlan) -> list[str]:
     return names
 
 
+DEFAULT_ITEM_COST_EUR = {
+    "chicken": 2.50,
+    "beef": 3.50,
+    "pork": 2.80,
+    "fish": 3.20,
+    "shrimp": 3.40,
+    "tofu": 1.80,
+    "egg": 0.45,
+    "rice": 0.55,
+    "pasta": 0.65,
+    "potato": 0.45,
+    "tomato": 0.50,
+    "onion": 0.35,
+    "garlic": 0.30,
+    "pepper": 0.40,
+    "salt": 0.10,
+    "oil": 0.55,
+    "butter": 0.80,
+    "milk": 0.90,
+    "cheese": 1.25,
+    "flour": 0.50,
+    "sugar": 0.45,
+    "bread": 1.00,
+}
+
+
+def _estimate_item_cost_eur(ingredient: str) -> float:
+    canonical = _canonical_ingredient_name(ingredient)
+    if canonical in DEFAULT_ITEM_COST_EUR:
+        return DEFAULT_ITEM_COST_EUR[canonical]
+    return 0.75
+
+
 def _aggregate_shopping_items(rows: list[dict]) -> list[dict]:
     ingredient_buckets: dict[str, dict] = {}
     for row in rows:
@@ -916,12 +1001,54 @@ def _aggregate_shopping_items(rows: list[dict]) -> list[dict]:
     return payload
 
 
+def _enrich_items_with_costs(items: list[dict], currency: str = "EUR") -> tuple[list[dict], dict]:
+    normalized_items = []
+    estimated_total = 0.0
+    for item in items:
+        ingredient = str(item.get("ingredient") or "").strip().lower()
+        count = _to_int(item.get("count"), 1)
+        count = max(1, count)
+        variants = item.get("variants")
+        variants = [str(v).strip().lower() for v in variants] if isinstance(variants, list) else []
+
+        estimated_unit_cost = _to_optional_float(item.get("estimated_unit_cost"))
+        if estimated_unit_cost is None:
+            estimated_unit_cost = _estimate_item_cost_eur(ingredient)
+
+        estimated_subtotal = _to_optional_float(item.get("estimated_subtotal"))
+        if estimated_subtotal is None:
+            estimated_subtotal = estimated_unit_cost * count
+
+        confidence = _to_optional_float(item.get("confidence"))
+        if confidence is None:
+            confidence = 0.55
+
+        normalized_row = {
+            "ingredient": ingredient,
+            "count": count,
+            "variants": sorted(set(variants)),
+            "estimated_unit_cost": round(float(estimated_unit_cost), 2),
+            "estimated_subtotal": round(float(estimated_subtotal), 2),
+            "currency": currency,
+            "confidence": round(max(0.0, min(1.0, float(confidence))), 2),
+        }
+        normalized_items.append(normalized_row)
+        estimated_total += normalized_row["estimated_subtotal"]
+
+    summary = {
+        "estimated_total": round(estimated_total, 2),
+        "currency": currency,
+        "notes": "Rough estimate generated for planning purposes.",
+    }
+    return normalized_items, summary
+
+
 def _build_shopping_items_rules(ingredient_names: list[str]) -> list[dict]:
     rows = [{"source": name, "canonical": [_canonical_ingredient_name(name)]} for name in ingredient_names]
     return _aggregate_shopping_items(rows)
 
 
-def _build_shopping_items_openai(ingredient_names: list[str], openai_client, model: str) -> list[dict] | None:
+def _build_shopping_items_openai(ingredient_names: list[str], openai_client, model: str) -> dict | None:
     try:
         completion = openai_client.chat.completions.create(
             model=model,
@@ -930,56 +1057,82 @@ def _build_shopping_items_openai(ingredient_names: list[str], openai_client, mod
                 {
                     "role": "system",
                     "content": (
-                        "You are a grocery list normalizer. "
-                        "Return strict JSON only. "
-                        "For each source item, output one normalized object in the same order."
+                        "You are a grocery assistant. Build a consolidated shopping list with rough costs. "
+                        "Return strict JSON only."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        "Normalize these ingredients into canonical grocery labels.\n"
+                        "Create a practical shopping list from these raw ingredients.\n"
                         "Rules:\n"
                         "- Fix obvious typos (e.g., chichken -> chicken).\n"
                         "- Merge variants (e.g., chicken breast/chicken thighs -> chicken).\n"
-                        "- Do NOT over-merge multi-ingredient phrases into one ingredient.\n"
-                        "- If item is a combination phrase like 'salt and pepper', split into both ['salt', 'pepper'].\n"
-                        "- Keep output minimal and practical for shopping.\n\n"
-                        "Return this exact JSON schema:\n"
+                        "- Keep multi-ingredient phrases split when needed (e.g., salt and pepper).\n"
+                        "- Add rough EUR estimate per item and subtotal.\n"
+                        "- Costs should be realistic but rough for supermarket planning.\n\n"
+                        "Return this exact JSON schema only:\n"
                         "{\n"
-                        '  "normalized_items": [\n'
+                        '  "items": [\n'
                         "    {\n"
-                        '      "source": "<original input item>",\n'
-                        '      "canonical": ["<one or more canonical ingredient labels>"]\n'
+                        '      "ingredient": "<canonical ingredient>",\n'
+                        '      "count": <integer>,\n'
+                        '      "variants": ["<variant labels from input>"],\n'
+                        '      "estimated_unit_cost": <number>,\n'
+                        '      "estimated_subtotal": <number>,\n'
+                        '      "currency": "EUR",\n'
+                        '      "confidence": <number 0..1>\n'
                         "    }\n"
-                        "  ]\n"
+                        "  ],\n"
+                        '  "cost_summary": {"estimated_total": <number>, "currency": "EUR", "notes": "<short note>"}\n'
                         "}\n\n"
-                        f"Input items (ordered): {json.dumps(ingredient_names)}"
+                        f"Input items: {json.dumps(ingredient_names)}"
                     ),
                 },
             ],
         )
         raw_content = completion.choices[0].message.content
         parsed = json.loads(raw_content)
-        rows = parsed.get("normalized_items")
-        if not isinstance(rows, list):
-            return None
-        if len(rows) != len(ingredient_names):
+        rows = parsed.get("items")
+        if not isinstance(rows, list) or not rows:
             return None
 
-        normalized_rows = []
-        for idx, row in enumerate(rows):
+        normalized_rows: list[dict] = []
+        for row in rows:
             if not isinstance(row, dict):
                 return None
-            source = str(row.get("source") or ingredient_names[idx]).strip().lower()
-            canonical = _normalize_string_list(row.get("canonical"))
+            ingredient = str(row.get("ingredient") or "").strip().lower()
+            if not ingredient:
+                continue
             normalized_rows.append(
                 {
-                    "source": source or ingredient_names[idx],
-                    "canonical": canonical,
+                    "ingredient": ingredient,
+                    "count": max(1, _to_int(row.get("count"), 1)),
+                    "variants": _normalize_string_list(row.get("variants")),
+                    "estimated_unit_cost": _to_optional_float(row.get("estimated_unit_cost")),
+                    "estimated_subtotal": _to_optional_float(row.get("estimated_subtotal")),
+                    "currency": "EUR",
+                    "confidence": _to_optional_float(row.get("confidence")),
                 }
             )
-        return _aggregate_shopping_items(normalized_rows)
+
+        if not normalized_rows:
+            return None
+
+        normalized_rows, summary = _enrich_items_with_costs(normalized_rows, currency="EUR")
+        parsed_summary = parsed.get("cost_summary")
+        if isinstance(parsed_summary, dict):
+            if _to_optional_float(parsed_summary.get("estimated_total")) is not None:
+                summary["estimated_total"] = round(float(parsed_summary.get("estimated_total")), 2)
+            if str(parsed_summary.get("notes") or "").strip():
+                summary["notes"] = str(parsed_summary.get("notes")).strip()
+
+        return {
+            "items": normalized_rows,
+            "cost_summary": summary,
+            "estimate_source": "openai",
+            "is_rough_estimate": True,
+        }
     except Exception:
         return None
 
@@ -987,7 +1140,12 @@ def _build_shopping_items_openai(ingredient_names: list[str], openai_client, mod
 def _build_shopping_list_items(meal_plan: MealPlan):
     ingredient_names = _collect_plan_ingredient_names(meal_plan)
     if not ingredient_names:
-        return []
+        return {
+            "items": [],
+            "cost_summary": {"estimated_total": 0.0, "currency": "EUR", "notes": "No ingredients in selected plan."},
+            "estimate_source": "rules",
+            "is_rough_estimate": True,
+        }
 
     use_openai = os.environ.get("USE_OPENAI_SHOPPING_CONDENSER", "1") == "1"
     openai_api_key = os.environ.get("OPENAI_API_KEY")
@@ -1004,7 +1162,77 @@ def _build_shopping_list_items(meal_plan: MealPlan):
         except Exception:
             pass
 
-    return _build_shopping_items_rules(ingredient_names)
+    items = _build_shopping_items_rules(ingredient_names)
+    cost_items, summary = _enrich_items_with_costs(items, currency="EUR")
+    return {
+        "items": cost_items,
+        "cost_summary": summary,
+        "estimate_source": "rules",
+        "is_rough_estimate": True,
+    }
+
+
+def _normalize_shopping_payload(raw_items) -> dict:
+    if isinstance(raw_items, dict):
+        raw_list = raw_items.get("items")
+        if isinstance(raw_list, list):
+            normalized_items, summary = _enrich_items_with_costs(raw_list, currency="EUR")
+            cost_summary = raw_items.get("cost_summary")
+            if isinstance(cost_summary, dict):
+                total = _to_optional_float(cost_summary.get("estimated_total"))
+                if total is not None:
+                    summary["estimated_total"] = round(total, 2)
+                notes = str(cost_summary.get("notes") or "").strip()
+                if notes:
+                    summary["notes"] = notes
+            return {
+                "items": normalized_items,
+                "cost_summary": summary,
+                "estimate_source": str(raw_items.get("estimate_source") or "rules").lower(),
+                "is_rough_estimate": True,
+            }
+
+    if isinstance(raw_items, list):
+        normalized_items, summary = _enrich_items_with_costs(raw_items, currency="EUR")
+        return {
+            "items": normalized_items,
+            "cost_summary": summary,
+            "estimate_source": "rules",
+            "is_rough_estimate": True,
+        }
+
+    return {
+        "items": [],
+        "cost_summary": {"estimated_total": 0.0, "currency": "EUR", "notes": "No estimate available."},
+        "estimate_source": "rules",
+        "is_rough_estimate": True,
+    }
+
+
+def _shopping_response_payload(shopping: ShoppingList) -> dict:
+    payload = _normalize_shopping_payload(shopping.items)
+    payload["meal_plan"] = shopping.meal_plan_id
+    payload["created_at"] = shopping.created_at
+    return payload
+
+
+def _refresh_plan_completion(plan: MealPlan) -> MealPlan:
+    total_count = plan.items.count()
+    rated_count = plan.items.filter(rating__isnull=False).count()
+    is_completed = total_count > 0 and rated_count == total_count
+
+    if is_completed:
+        if not plan.is_completed or plan.completed_at is None:
+            plan.is_completed = True
+            plan.completed_at = timezone.now()
+            plan.save(update_fields=["is_completed", "completed_at", "updated_at"])
+    else:
+        if plan.is_completed or plan.completed_at is not None:
+            plan.is_completed = False
+            plan.completed_at = None
+            plan.save(update_fields=["is_completed", "completed_at", "updated_at"])
+
+    return plan
 
 
 class TagListView(APIView):
@@ -1155,6 +1383,7 @@ class GenerateMealPlanView(APIView):
         exclude_tags_override = _normalize_string_list(request.data.get("exclude_tags"))
         optimize_mode = _normalize_optimize_mode(request.data.get("optimize_mode"))
         selection_seed = _to_optional_int(request.data.get("selection_seed"))
+        recipe_rating_map = _user_recipe_rating_map(request.user)
         if include_tags_override or exclude_tags_override:
             parsed_query = _apply_tag_overrides(
                 parsed_query,
@@ -1165,6 +1394,7 @@ class GenerateMealPlanView(APIView):
             parsed_query,
             optimize_mode=optimize_mode,
             selection_seed=selection_seed,
+            recipe_rating_map=recipe_rating_map,
         )
 
         parser_warnings = list(parsed_query.get("parser_warnings", []))
@@ -1271,7 +1501,11 @@ class SwapMealView(APIView):
             return Response({"error": "No replacement recipe found."}, status=status.HTTP_404_NOT_FOUND)
 
         plan_item.recipe = replacement
-        plan_item.save(update_fields=["recipe"])
+        plan_item.rating = None
+        plan_item.rated_at = None
+        plan_item.feedback_note = ""
+        plan_item.save(update_fields=["recipe", "rating", "rated_at", "feedback_note"])
+        _refresh_plan_completion(plan)
 
         return Response(
             {
@@ -1279,6 +1513,31 @@ class SwapMealView(APIView):
                 "recipe": _serialize_recipe(replacement),
             }
         )
+
+
+class RateMealView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, plan_id: int):
+        plan = get_object_or_404(MealPlan.objects.filter(user=request.user).prefetch_related("items"), id=plan_id)
+        serializer = RateMealSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        position = serializer.validated_data["position"]
+        rating = serializer.validated_data["rating"]
+        feedback_note = str(serializer.validated_data.get("feedback_note") or "").strip()
+
+        plan_item = get_object_or_404(MealPlanItem, meal_plan=plan, position=position)
+        plan_item.rating = rating
+        plan_item.feedback_note = feedback_note
+        plan_item.rated_at = timezone.now()
+        plan_item.save(update_fields=["rating", "feedback_note", "rated_at"])
+
+        refreshed_plan = _refresh_plan_completion(plan)
+        payload = MealPlanSerializer(refreshed_plan).data
+        payload["rated_count"] = refreshed_plan.items.filter(rating__isnull=False).count()
+        payload["total_count"] = refreshed_plan.items.count()
+        return Response(payload)
 
 
 class ShoppingListView(APIView):
@@ -1289,7 +1548,7 @@ class ShoppingListView(APIView):
         shopping = ShoppingList.objects.filter(meal_plan=plan).first()
         if not shopping:
             return Response({"error": "Shopping list not generated yet."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(ShoppingListSerializer(shopping).data)
+        return Response(_shopping_response_payload(shopping))
 
     def post(self, request, plan_id: int):
         plan = get_object_or_404(MealPlan.objects.prefetch_related("items__recipe"), id=plan_id, user=request.user)
@@ -1300,4 +1559,4 @@ class ShoppingListView(APIView):
             defaults={"items": items},
         )
 
-        return Response(ShoppingListSerializer(shopping).data)
+        return Response(_shopping_response_payload(shopping))

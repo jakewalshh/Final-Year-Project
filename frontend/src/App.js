@@ -513,6 +513,27 @@ function App() {
     }
   };
 
+  const handleRateMeal = async (position, rating) => {
+    if (!selectedPlan?.id) return;
+    setLoading(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const data = await apiFetch(`/meal-plans/${selectedPlan.id}/rate/`, {
+        method: "POST",
+        body: { position, rating },
+      });
+      setSelectedPlan(data);
+      setNotice(`Rated meal #${position} as ${rating} star${rating === 1 ? "" : "s"}.`);
+      await loadSavedPlans();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatNutrition = (recipe) => {
     if (!recipe?.nutrition) return null;
     const n = recipe.nutrition;
@@ -980,6 +1001,9 @@ function App() {
                   <div>
                     <strong>{plan.title}</strong>
                     <div className="panel-description">{new Date(plan.created_at).toLocaleString()}</div>
+                    <div className="panel-description">
+                      {plan.is_completed ? "Completed" : "In progress"} | Rated {plan.rated_count ?? 0}/{plan.total_count ?? plan.item_count ?? 0}
+                    </div>
                   </div>
                   <div className="row-actions">
                     <button type="button" className="button secondary" onClick={() => loadPlanDetail(plan.id)}>
@@ -1004,11 +1028,27 @@ function App() {
               <>
                 <p><strong>{selectedPlan.title}</strong></p>
                 <p className="panel-description">Prompt: {selectedPlan.source_prompt}</p>
+                <p className="panel-description">
+                  {selectedPlan.is_completed ? "Completed plan" : "Plan in progress"} | Rated {selectedPlan.rated_count ?? 0}/{selectedPlan.total_count ?? (selectedPlan.items || []).length}
+                </p>
                 <div className="list-block">
                   {(selectedPlan.items || []).map((item) => (
                     <div key={item.position} className="list-item compact">
                       <div>
                         <strong>#{item.position}</strong> {item.recipe_name}
+                        <div className="row-actions" style={{ marginTop: 6 }}>
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                              key={`${item.position}-${star}`}
+                              type="button"
+                              className={`button secondary ${item.rating === star ? "active-mode" : ""}`}
+                              onClick={() => handleRateMeal(item.position, star)}
+                              disabled={loading}
+                            >
+                              {star}*
+                            </button>
+                          ))}
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -1144,6 +1184,20 @@ function App() {
           {!shoppingList && <p className="panel-description">Load or generate a shopping list for a meal plan.</p>}
           {shoppingList && (
             <div className="list-block">
+              <div className="list-item">
+                <div>
+                  <strong>Estimated Total</strong>
+                  <div className="panel-description">
+                    Source: {shoppingList.estimate_source || "rules"} | Rough estimate
+                  </div>
+                  {shoppingList.cost_summary?.notes && (
+                    <div className="panel-description">{shoppingList.cost_summary.notes}</div>
+                  )}
+                </div>
+                <strong>
+                  {shoppingList.cost_summary?.currency || "EUR"} {shoppingList.cost_summary?.estimated_total ?? "0.00"}
+                </strong>
+              </div>
               {(shoppingList.items || []).map((item) => (
                 <div key={item.ingredient} className="list-item compact">
                   <div>
@@ -1151,8 +1205,11 @@ function App() {
                     {Array.isArray(item.variants) && item.variants.length > 1 && (
                       <div className="panel-description">From: {item.variants.join(", ")}</div>
                     )}
+                    <div className="panel-description">
+                      Est: {(item.currency || "EUR")} {item.estimated_unit_cost ?? 0} each
+                    </div>
                   </div>
-                  <strong>x{item.count}</strong>
+                  <strong>x{item.count} | {(item.currency || "EUR")} {item.estimated_subtotal ?? 0}</strong>
                 </div>
               ))}
             </div>

@@ -28,6 +28,8 @@ class MealPlan(models.Model):
     title = models.CharField(max_length=200)
     source_prompt = models.TextField(blank=True, default="")
     parsed_query = models.JSONField(default=dict)
+    is_completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -50,6 +52,9 @@ class MealPlanItem(models.Model):
         on_delete=models.CASCADE,
         related_name="plan_items",
     )
+    rating = models.PositiveSmallIntegerField(null=True, blank=True)
+    rated_at = models.DateTimeField(null=True, blank=True)
+    feedback_note = models.TextField(blank=True, default="")
 
     class Meta:
         constraints = [
