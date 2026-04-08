@@ -4,11 +4,25 @@ import "./App.css";
 const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:8000/api";
 
 const QUICK_PROMPTS = [
-  "Create 4 vegetarian meals under 30 minutes",
-  "Make me 4 vegetarian meals, i am extremely allergic to fish",
-  "Give me 5 high protein chicken meals, no peanuts",
-  "Create 3 quick dinners with tofu and max 500 calories",
+  "4 chicken dinners under 30 minutes",
+  "3 vegetarian dinners with pasta",
+  "5 high protein meals with beef",
+  "4 quick meals with rice and vegetables",
+  "3 healthy fish dinners",
+  "4 budget-friendly vegetarian meals",
+  "5 easy family dinners",
+  "4 low calorie chicken meals",
+  "3 tofu dinners under 40 minutes",
+  "4 vegetarian meals with chickpeas",
+  "5 simple dinners with potatoes",
+  "4 high fiber vegetarian meals",
+  "3 gluten free dinners with chicken",
+  "4 dairy free meals with salmon",
+  "5 easy dinners with eggs",
+  "4 balanced meals under 500 calories",
 ];
+
+const randomQuickPrompt = () => QUICK_PROMPTS[Math.floor(Math.random() * QUICK_PROMPTS.length)];
 
 const toCsv = (value) =>
   (value || [])
@@ -121,7 +135,8 @@ function App() {
 
   const [appTab, setAppTab] = useState("plan");
   const [inputMode, setInputMode] = useState("prompt");
-  const [prompt, setPrompt] = useState("Create 4 vegetarian meals under 30 minutes");
+  const [prompt, setPrompt] = useState(() => randomQuickPrompt());
+  const [promptPrefilled, setPromptPrefilled] = useState(true);
 
   const [manualFields, setManualFields] = useState({
     num_meals: "4",
@@ -139,7 +154,6 @@ function App() {
   const [notice, setNotice] = useState("");
   const [optimizeMode, setOptimizeMode] = useState("balanced");
   const [showNutrition, setShowNutrition] = useState(false);
-  const [showParsedModal, setShowParsedModal] = useState(false);
 
   const [parsedQuery, setParsedQuery] = useState(null);
   const [recipes, setRecipes] = useState([]);
@@ -222,7 +236,8 @@ function App() {
     setIncludeTagDraft("");
     setExcludeTagDraft("");
     setOptimizeMode("balanced");
-    setShowParsedModal(false);
+    setPrompt(randomQuickPrompt());
+    setPromptPrefilled(true);
   };
 
   const apiFetch = async (path, options = {}, canRetry = true, tokenOverride = null) => {
@@ -487,10 +502,6 @@ function App() {
       setMealPlan(data.meal_plan || null);
       setNotice(data.no_results ? "No results found for current constraints." : "Meal plan generated and saved.");
 
-      if (!isAdmin && data.query) {
-        setShowParsedModal(true);
-      }
-
       await loadSavedPlans();
       if (data.meal_plan?.id) {
         setSelectedPlanId(String(data.meal_plan.id));
@@ -644,6 +655,22 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePromptFocus = () => {
+    if (!promptPrefilled) return;
+    setPrompt("");
+    setPromptPrefilled(false);
+  };
+
+  const handlePromptChange = (value) => {
+    setPrompt(value);
+    setPromptPrefilled(false);
+  };
+
+  const handleNewSuggestion = () => {
+    setPrompt(randomQuickPrompt());
+    setPromptPrefilled(true);
   };
 
   const formatNutrition = (recipe) => {
@@ -875,196 +902,363 @@ function App() {
       )}
 
       {appTab === "plan" && (
-        <div className="layout-grid">
-          <section className="panel">
-            <h2 className="panel-title">Generate Meal Plan</h2>
-            <form className="form" onSubmit={handleGeneratePlan}>
-              <div className="mode-switch">
-                <button
-                  type="button"
-                  className={`button secondary ${inputMode === "prompt" ? "active-mode" : ""}`}
-                  onClick={() => setInputMode("prompt")}
-                >
-                  Prompt
-                </button>
-                <button
-                  type="button"
-                  className={`button secondary ${inputMode === "manual" ? "active-mode" : ""}`}
-                  onClick={() => setInputMode("manual")}
-                >
-                  Manual Criteria
-                </button>
-              </div>
-
-              {inputMode === "prompt" ? (
-                <>
-                  <label className="label">
-                    Prompt
-                    <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-                  </label>
-                  <div className="quick-prompts">
-                    {QUICK_PROMPTS.map((x) => (
-                      <button key={x} type="button" className="quick-prompt" onClick={() => setPrompt(x)}>
-                        {x}
-                      </button>
-                    ))}
+        <div className={`layout-grid ${!isAdmin ? "user-plan-layout" : ""}`}>
+          {isAdmin ? (
+            <>
+              <section className="panel">
+                <h2 className="panel-title">Generate Meal Plan</h2>
+                <form className="form" onSubmit={handleGeneratePlan}>
+                  <div className="mode-switch">
+                    <button
+                      type="button"
+                      className={`button secondary ${inputMode === "prompt" ? "active-mode" : ""}`}
+                      onClick={() => setInputMode("prompt")}
+                    >
+                      Prompt
+                    </button>
+                    <button
+                      type="button"
+                      className={`button secondary ${inputMode === "manual" ? "active-mode" : ""}`}
+                      onClick={() => setInputMode("manual")}
+                    >
+                      Manual Criteria
+                    </button>
                   </div>
-                </>
-              ) : (
-                <div className="filter-grid">
+
+                  {inputMode === "prompt" ? (
+                    <>
+                      <label className="label">
+                        Prompt
+                        <textarea className="textarea" value={prompt} onChange={(e) => handlePromptChange(e.target.value)} />
+                      </label>
+                      <div className="quick-prompts">
+                        {QUICK_PROMPTS.slice(0, 6).map((x) => (
+                          <button key={x} type="button" className="quick-prompt" onClick={() => handlePromptChange(x)}>
+                            {x}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="filter-grid">
+                      <label className="label">
+                        Meals
+                        <input
+                          className="input"
+                          type="number"
+                          min="1"
+                          max="10"
+                          value={manualFields.num_meals}
+                          onChange={(e) => setManualFields((p) => ({ ...p, num_meals: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Ingredients (comma-separated)
+                        <input
+                          className="input"
+                          value={manualFields.ingredient_keywords}
+                          onChange={(e) => setManualFields((p) => ({ ...p, ingredient_keywords: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Exclude ingredients (comma-separated)
+                        <input
+                          className="input"
+                          value={manualFields.exclude_ingredients}
+                          onChange={(e) => setManualFields((p) => ({ ...p, exclude_ingredients: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Search text
+                        <input
+                          className="input"
+                          value={manualFields.search_text}
+                          onChange={(e) => setManualFields((p) => ({ ...p, search_text: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Max minutes
+                        <input
+                          className="input"
+                          type="number"
+                          min="1"
+                          value={manualFields.max_minutes}
+                          onChange={(e) => setManualFields((p) => ({ ...p, max_minutes: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Max calories
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          value={manualFields.max_calories}
+                          onChange={(e) => setManualFields((p) => ({ ...p, max_calories: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Min protein %DV
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          value={manualFields.min_protein_pdv}
+                          onChange={(e) => setManualFields((p) => ({ ...p, min_protein_pdv: e.target.value }))}
+                        />
+                      </label>
+                      <label className="label">
+                        Max carbs %DV
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          value={manualFields.max_carbs_pdv}
+                          onChange={(e) => setManualFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  )}
+
                   <label className="label">
-                    Meals
-                    <input
+                    Optimization mode
+                    <select
                       className="input"
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={manualFields.num_meals}
-                      onChange={(e) => setManualFields((p) => ({ ...p, num_meals: e.target.value }))}
-                    />
+                      value={optimizeMode}
+                      onChange={(e) => setOptimizeMode(e.target.value)}
+                    >
+                      <option value="balanced">Balanced</option>
+                      <option value="budget">Budget-first</option>
+                      <option value="sustainability">Sustainability-first</option>
+                    </select>
                   </label>
-                  <label className="label">
-                    Ingredients (comma-separated)
-                    <input
-                      className="input"
-                      value={manualFields.ingredient_keywords}
-                      onChange={(e) => setManualFields((p) => ({ ...p, ingredient_keywords: e.target.value }))}
-                    />
-                  </label>
-                  <label className="label">
-                    Exclude ingredients (comma-separated)
-                    <input
-                      className="input"
-                      value={manualFields.exclude_ingredients}
-                      onChange={(e) => setManualFields((p) => ({ ...p, exclude_ingredients: e.target.value }))}
-                    />
-                  </label>
-                  <label className="label">
-                    Search text
-                    <input
-                      className="input"
-                      value={manualFields.search_text}
-                      onChange={(e) => setManualFields((p) => ({ ...p, search_text: e.target.value }))}
-                    />
-                  </label>
-                  <label className="label">
-                    Max minutes
-                    <input
-                      className="input"
-                      type="number"
-                      min="1"
-                      value={manualFields.max_minutes}
-                      onChange={(e) => setManualFields((p) => ({ ...p, max_minutes: e.target.value }))}
-                    />
-                  </label>
-                  <label className="label">
-                    Max calories
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      value={manualFields.max_calories}
-                      onChange={(e) => setManualFields((p) => ({ ...p, max_calories: e.target.value }))}
-                    />
-                  </label>
-                  <label className="label">
-                    Min protein %DV
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      value={manualFields.min_protein_pdv}
-                      onChange={(e) => setManualFields((p) => ({ ...p, min_protein_pdv: e.target.value }))}
-                    />
-                  </label>
-                  <label className="label">
-                    Max carbs %DV
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      value={manualFields.max_carbs_pdv}
-                      onChange={(e) => setManualFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
-                    />
-                  </label>
+
+                  {renderTagControls()}
+
+                  <div className="toggle-row">
+                    <button className="button cta-button" type="submit" disabled={loading}>
+                      {loading ? "Generating..." : "Generate Meal Plan"}
+                    </button>
+                    {mealPlan?.id && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => handleGenerateShoppingList(mealPlan.id)}
+                        disabled={loading}
+                      >
+                        Build Shopping List
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => setShowNutrition((v) => !v)}
+                    >
+                      {showNutrition ? "Hide Nutrition" : "Show Nutrition"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => setAppTab("admin")}
+                    >
+                      Open Admin Tools
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="panel">
+                <h2 className="panel-title">Parsed Request</h2>
+                {!parsedQuery && <p className="panel-description">Generate a plan to inspect parsed criteria.</p>}
+                {parsedQuery && parsedSummary}
+
+                {parserWarnings.length > 0 && (
+                  <div className="warning-panel">
+                    <strong>Parser warnings</strong>
+                    <ul>
+                      {parserWarnings.map((w, i) => (
+                        <li key={`${w}-${i}`}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            </>
+          ) : (
+            <section className="panel panel-wide user-chat-panel">
+              <h2 className="panel-title">Plan Meals With Chat</h2>
+              <p className="panel-description">Describe your meals and generate a full plan.</p>
+              <form className="form user-chat-form" onSubmit={handleGeneratePlan}>
+                <div className="mode-switch compact-toggle">
+                  <button
+                    type="button"
+                    className={`button secondary compact-toggle-btn ${inputMode === "prompt" ? "active-mode" : ""}`}
+                    onClick={() => setInputMode("prompt")}
+                  >
+                    Prompt
+                  </button>
+                  <button
+                    type="button"
+                    className={`button secondary compact-toggle-btn ${inputMode === "manual" ? "active-mode" : ""}`}
+                    onClick={() => setInputMode("manual")}
+                  >
+                    Manual
+                  </button>
                 </div>
+
+                {inputMode === "prompt" ? (
+                  <>
+                    <label className="label">
+                      Chat
+                      <textarea
+                        className="textarea chat-input"
+                        value={prompt}
+                        onFocus={handlePromptFocus}
+                        onChange={(e) => handlePromptChange(e.target.value)}
+                      />
+                    </label>
+                    <div className="suggestion-row">
+                      <span className="panel-description">{promptPrefilled ? "Suggestion loaded" : "Type your own request"}</span>
+                      <button type="button" className="button secondary" onClick={handleNewSuggestion}>
+                        New Suggestion
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="filter-grid">
+                    <label className="label">
+                      Meals
+                      <input
+                        className="input"
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={manualFields.num_meals}
+                        onChange={(e) => setManualFields((p) => ({ ...p, num_meals: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Ingredients (comma-separated)
+                      <input
+                        className="input"
+                        value={manualFields.ingredient_keywords}
+                        onChange={(e) => setManualFields((p) => ({ ...p, ingredient_keywords: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Exclude ingredients (comma-separated)
+                      <input
+                        className="input"
+                        value={manualFields.exclude_ingredients}
+                        onChange={(e) => setManualFields((p) => ({ ...p, exclude_ingredients: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Search text
+                      <input
+                        className="input"
+                        value={manualFields.search_text}
+                        onChange={(e) => setManualFields((p) => ({ ...p, search_text: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Max minutes
+                      <input
+                        className="input"
+                        type="number"
+                        min="1"
+                        value={manualFields.max_minutes}
+                        onChange={(e) => setManualFields((p) => ({ ...p, max_minutes: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Max calories
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        value={manualFields.max_calories}
+                        onChange={(e) => setManualFields((p) => ({ ...p, max_calories: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Min protein %DV
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        value={manualFields.min_protein_pdv}
+                        onChange={(e) => setManualFields((p) => ({ ...p, min_protein_pdv: e.target.value }))}
+                      />
+                    </label>
+                    <label className="label">
+                      Max carbs %DV
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        value={manualFields.max_carbs_pdv}
+                        onChange={(e) => setManualFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <label className="label narrow-label">
+                  Optimization mode
+                  <select
+                    className="input"
+                    value={optimizeMode}
+                    onChange={(e) => setOptimizeMode(e.target.value)}
+                  >
+                    <option value="balanced">Balanced</option>
+                    <option value="budget">Budget-first</option>
+                    <option value="sustainability">Sustainability-first</option>
+                  </select>
+                </label>
+                {inputMode === "manual" && renderTagControls()}
+
+                <div className="toggle-row user-chat-actions">
+                  <button className="button cta-button" type="submit" disabled={loading}>
+                    {loading ? "Generating..." : "Generate Meal Plan"}
+                  </button>
+                  {mealPlan?.id && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => handleGenerateShoppingList(mealPlan.id)}
+                      disabled={loading}
+                    >
+                      Build Shopping List
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setShowNutrition((v) => !v)}
+                  >
+                    {showNutrition ? "Hide Nutrition" : "Show Nutrition"}
+                  </button>
+                </div>
+              </form>
+
+              {parsedQuery && (
+                <details className="dev-details parsed-dropdown">
+                  <summary>Show Parsed Info (optional)</summary>
+                  {parsedSummary}
+                  {parserWarnings.length > 0 && (
+                    <div className="warning-panel">
+                      <strong>Warnings</strong>
+                      <ul>
+                        {parserWarnings.map((w, i) => (
+                          <li key={`${w}-parsed-${i}`}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </details>
               )}
-
-              <label className="label">
-                Optimization mode
-                <select
-                  className="input"
-                  value={optimizeMode}
-                  onChange={(e) => setOptimizeMode(e.target.value)}
-                >
-                  <option value="balanced">Balanced</option>
-                  <option value="budget">Budget-first</option>
-                  <option value="sustainability">Sustainability-first</option>
-                </select>
-              </label>
-
-              {renderTagControls()}
-
-              <div className="toggle-row">
-                <button className="button" type="submit" disabled={loading}>
-                  {loading ? "Generating..." : "Generate Meal Plan"}
-                </button>
-                {mealPlan?.id && (
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => handleGenerateShoppingList(mealPlan.id)}
-                    disabled={loading}
-                  >
-                    Build Shopping List
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => setShowNutrition((v) => !v)}
-                >
-                  {showNutrition ? "Hide Nutrition" : "Show Nutrition"}
-                </button>
-                {!isAdmin && parsedQuery && (
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => setShowParsedModal(true)}
-                  >
-                    View Parsed Criteria
-                  </button>
-                )}
-                {isAdmin && (
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => setAppTab("admin")}
-                  >
-                    Open Admin Tools
-                  </button>
-                )}
-              </div>
-            </form>
-          </section>
-
-          <section className="panel">
-            <h2 className="panel-title">Parsed Request</h2>
-            {!parsedQuery && <p className="panel-description">Generate a plan to inspect parsed criteria.</p>}
-            {parsedQuery && parsedSummary}
-
-            {parserWarnings.length > 0 && (
-              <div className="warning-panel">
-                <strong>Parser warnings</strong>
-                <ul>
-                  {parserWarnings.map((w, i) => (
-                    <li key={`${w}-${i}`}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-          </section>
+            </section>
+          )}
 
           <section className="panel panel-wide">
             <h2 className="panel-title">Recipes</h2>
@@ -1386,29 +1580,6 @@ function App() {
         </div>
       )}
 
-      {!isAdmin && showParsedModal && parsedQuery && (
-        <div className="modal-overlay" onClick={() => setShowParsedModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>Parsed Criteria</h3>
-              <button type="button" className="button secondary" onClick={() => setShowParsedModal(false)}>
-                Close
-              </button>
-            </div>
-            {parsedSummary}
-            {parserWarnings.length > 0 && (
-              <div className="warning-panel">
-                <strong>Warnings</strong>
-                <ul>
-                  {parserWarnings.map((w, i) => (
-                    <li key={`${w}-modal-${i}`}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

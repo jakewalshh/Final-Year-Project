@@ -266,6 +266,11 @@ body {
   font-size: 0.9rem;
 }
 
+.summary-row > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .summary-key {
   color: var(--text-soft);
   font-weight: 700;
@@ -341,6 +346,83 @@ body {
 }
 
 .recipe-copy ol { margin: 6px 0 0; padding-left: 18px; }
+
+.user-plan-layout {
+  grid-template-columns: 1fr;
+}
+
+.user-chat-panel {
+  width: min(920px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.user-chat-form {
+  margin-top: 12px;
+}
+
+.chat-input {
+  min-height: 140px;
+  border-radius: 14px;
+  font-size: 1rem;
+}
+
+.suggestion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.narrow-label {
+  max-width: 300px;
+}
+
+.user-chat-actions {
+  margin-top: 4px;
+}
+
+.compact-toggle {
+  gap: 6px;
+}
+
+.compact-toggle-btn {
+  padding: 6px 11px;
+  font-size: 0.82rem;
+  border-radius: 999px;
+}
+
+.cta-button {
+  font-size: 1.02rem;
+  padding: 13px 24px;
+  box-shadow: 0 10px 20px rgba(20, 114, 193, 0.25);
+}
+
+.parsed-dropdown {
+  margin-top: 12px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.parsed-dropdown .summary-block,
+.parsed-dropdown .warning-panel {
+  max-width: 100%;
+}
+
+.quick-prompt {
+  border: 1px solid #d1e7fa;
+  border-radius: 999px;
+  background: #f4faff;
+  color: #154a78;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.quick-prompt:hover {
+  background: #eaf5ff;
+}
 
 .nutrition-panel {
   margin-top: 8px;
@@ -513,6 +595,10 @@ body {
   .app-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .user-chat-panel {
+    width: 100%;
   }
 }
 
