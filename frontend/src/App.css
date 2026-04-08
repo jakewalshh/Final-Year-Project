@@ -286,6 +286,45 @@ body {
   padding: 10px;
 }
 
+.generated-swappable {
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.generated-swappable:hover,
+.generated-swappable:focus-visible {
+  border-color: #58b4ff;
+  box-shadow: 0 8px 18px rgba(30, 105, 188, 0.16);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.generated-swappable::after {
+  content: "Click to swap";
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border-radius: 999px;
+  border: 1px solid #cfe1f8;
+  background: #edf6ff;
+  color: #1f4f7d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 8px;
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+
+.generated-swappable:hover::after,
+.generated-swappable:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .recipe-title { margin: 0; font-size: 1rem; }
 
 .recipe-meta {

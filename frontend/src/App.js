@@ -597,6 +597,34 @@ function App() {
     }
   };
 
+  const handleSwapGeneratedMeal = async (position) => {
+    if (!mealPlan?.id) return;
+    setLoading(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const data = await apiFetch(`/meal-plans/${mealPlan.id}/swap/`, {
+        method: "POST",
+        body: { position },
+      });
+      if (data?.recipe) {
+        setRecipes((prev) =>
+          prev.map((recipe, idx) => (idx === position - 1 ? data.recipe : recipe))
+        );
+      }
+      setNotice(`Swapped generated meal at position ${position}.`);
+      if (selectedPlanId === String(mealPlan.id)) {
+        await loadPlanDetail(mealPlan.id);
+      }
+      await loadSavedPlans();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRateMeal = async (position, rating) => {
     if (!selectedPlan?.id) return;
     setLoading(true);
@@ -1040,10 +1068,30 @@ function App() {
 
           <section className="panel panel-wide">
             <h2 className="panel-title">Recipes</h2>
+            {mealPlan?.id && (
+              <p className="panel-description">Hover a recipe card and click to swap that meal.</p>
+            )}
             {!recipes.length && <p className="panel-description">No recipes yet.</p>}
             <div className="recipe-grid">
-              {recipes.map((recipe) => (
-                <article key={recipe.id} className="recipe-card">
+              {recipes.map((recipe, idx) => (
+                <article
+                  key={recipe.id}
+                  className={`recipe-card ${mealPlan?.id ? "generated-swappable" : ""}`}
+                  onClick={mealPlan?.id ? () => handleSwapGeneratedMeal(idx + 1) : undefined}
+                  onKeyDown={
+                    mealPlan?.id
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleSwapGeneratedMeal(idx + 1);
+                          }
+                        }
+                      : undefined
+                  }
+                  role={mealPlan?.id ? "button" : undefined}
+                  tabIndex={mealPlan?.id ? 0 : undefined}
+                  title={mealPlan?.id ? `Swap meal #${idx + 1}` : undefined}
+                >
                   <h3 className="recipe-title">{formatRecipeTitle(recipe.name)}</h3>
                   <div className="recipe-meta">
                     <span className="chip">{recipe.minutes || "?"} min</span>
