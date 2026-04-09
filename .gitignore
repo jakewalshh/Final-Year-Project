@@ -18,6 +18,7 @@ yarn-error.log*
 # VSCode / Mac
 .vscode/
 .DS_Store
+reports/
 
 # Virtual envs / env files
 venv/
