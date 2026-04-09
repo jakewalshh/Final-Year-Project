@@ -16,7 +16,8 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.http import JsonResponse
-from django.urls import path, include 
+from django.urls import include, path
+import os
 
 
 def health(request):
@@ -24,7 +25,12 @@ def health(request):
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('recipes.urls')),  # Include recipes app URLs
     path('api/', include('planner.urls')),
     path("health/", health, name="health"),
 ]
+
+# Legacy unauthenticated recipe endpoints were useful during prototyping.
+# Keep them enabled for compatibility unless explicitly disabled in production.
+enable_legacy_recipe_api = os.environ.get("ENABLE_LEGACY_RECIPE_API", "1") == "1"
+if enable_legacy_recipe_api:
+    urlpatterns.append(path("api/", include("recipes.urls")))

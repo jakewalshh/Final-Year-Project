@@ -10,16 +10,15 @@ const QUICK_PROMPTS = [
   "4 quick meals with rice and vegetables",
   "3 healthy fish dinners",
   "4 budget-friendly vegetarian meals",
-  "5 easy family dinners",
+  "3 easy family dinners",
   "4 low calorie chicken meals",
   "3 tofu dinners under 40 minutes",
   "4 vegetarian meals with chickpeas",
   "5 simple dinners with potatoes",
-  "4 high fiber vegetarian meals",
+  "4 vegetarian meals",
   "3 gluten free dinners with chicken",
   "4 dairy free meals with salmon",
   "5 easy dinners with eggs",
-  "4 balanced meals under 500 calories",
 ];
 
 const randomQuickPrompt = () => QUICK_PROMPTS[Math.floor(Math.random() * QUICK_PROMPTS.length)];

@@ -1,6 +1,7 @@
 import json
 import os
 
+from django.conf import settings
 from django.db.models import Prefetch, Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -132,7 +133,14 @@ def sample_plan(request):
     return JsonResponse({"recipes": recipes_data})
 
 
-@csrf_exempt  # dev-only: disable CSRF for this endpoint so React can POST
+def _csrf_exempt_in_debug(view_func):
+    # Legacy endpoint kept for compatibility, but do not bypass CSRF in production.
+    if settings.DEBUG:
+        return csrf_exempt(view_func)
+    return view_func
+
+
+@_csrf_exempt_in_debug
 def plan_meals(request):
     """
     Endpoint:
