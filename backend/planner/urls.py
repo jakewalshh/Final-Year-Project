@@ -3,6 +3,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
     GenerateMealPlanView,
+    IngredientPricingReportView,
     LoginView,
     MealPlanDetailView,
     MealPlanListView,
@@ -23,6 +24,7 @@ urlpatterns = [
 
     path("preferences/", PreferenceView.as_view(), name="preferences"),
     path("tags/", TagListView.as_view(), name="tag-list"),
+    path("reports/ingredient-pricing/", IngredientPricingReportView.as_view(), name="ingredient-pricing-report"),
 
     path("meal-plans/generate/", GenerateMealPlanView.as_view(), name="meal-plan-generate"),
     path("meal-plans/", MealPlanListView.as_view(), name="meal-plan-list"),

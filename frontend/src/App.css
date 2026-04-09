@@ -251,6 +251,19 @@ body {
   gap: 10px;
 }
 
+.inline-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-main);
+}
+
+.inline-checkbox input {
+  width: 16px;
+  height: 16px;
+}
+
 .summary-block {
   margin-top: 10px;
   display: flex;
@@ -346,6 +359,27 @@ body {
 }
 
 .recipe-copy ol { margin: 6px 0 0; padding-left: 18px; }
+
+.budget-status {
+  margin-top: 10px;
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--gray-050);
+  color: var(--text-main);
+}
+
+.budget-status.within {
+  border-color: #9ed7b5;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.budget-status.over {
+  border-color: #efcc93;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
 
 .user-plan-layout {
   grid-template-columns: 1fr;

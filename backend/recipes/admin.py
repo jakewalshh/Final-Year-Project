@@ -19,7 +19,9 @@ class RecipeAdmin(admin.ModelAdmin):
 
 @admin.register(Ingredient)
 class IngredientAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "estimated_unit_cost_eur")
     search_fields = ("name",)
+    list_filter = (("estimated_unit_cost_eur", admin.EmptyFieldListFilter),)
 
 
 @admin.register(Tag)

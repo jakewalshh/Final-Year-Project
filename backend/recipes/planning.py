@@ -160,6 +160,9 @@ def _normalize_item_list(value: Any) -> list[str]:
     seen = set()
     for item in value:
         cleaned = str(item).strip().lower()
+        cleaned = TOKEN_ALIASES.get(cleaned, cleaned)
+        if cleaned.startswith("veget"):
+            cleaned = "vegetarian"
         if not cleaned or cleaned in seen:
             continue
         seen.add(cleaned)
@@ -289,6 +292,7 @@ def _default_query() -> dict[str, Any]:
         "max_calories": None,
         "min_protein_pdv": None,
         "max_carbs_pdv": None,
+        "max_total_budget": None,
         "search_text": "",
         "exclude_ingredients": [],
         "parser_source": "rules",
@@ -310,7 +314,12 @@ def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
     parsed["max_calories"] = _to_float(raw_query.get("max_calories"), None)
     parsed["min_protein_pdv"] = _to_float(raw_query.get("min_protein_pdv"), None)
     parsed["max_carbs_pdv"] = _to_float(raw_query.get("max_carbs_pdv"), None)
+    parsed["max_total_budget"] = _to_float(raw_query.get("max_total_budget"), None)
     parsed["search_text"] = str(raw_query.get("search_text") or "").strip().lower()
+
+    if parsed["max_total_budget"] is not None and parsed["max_total_budget"] <= 0:
+        parsed["max_total_budget"] = None
+        warnings.append("Ignored non-positive max total budget constraint.")
 
     parser_source = str(raw_query.get("parser_source") or "rules")
     parsed["parser_source"] = parser_source if parser_source in {"rules", "openai", "manual"} else "rules"
@@ -422,6 +431,7 @@ def _infer_query_from_prompt(prompt: str, *, ingredient_lookup: set[str], tag_lo
             "max_calories": max_calories,
             "min_protein_pdv": protein_floor,
             "max_carbs_pdv": carb_cap,
+            "max_total_budget": None,
             "search_text": search_text,
             "exclude_ingredients": exclude_ingredients,
             "parser_source": "rules",
@@ -475,6 +485,7 @@ def parse_prompt_to_query(
                         '  "max_calories": number|null,\n'
                         '  "min_protein_pdv": number|null,\n'
                         '  "max_carbs_pdv": number|null,\n'
+                        '  "max_total_budget": number|null,\n'
                         '  "search_text": string,\n'
                         '  "exclude_ingredients": string[]\n'
                         "}\n"
@@ -504,7 +515,7 @@ def parse_prompt_to_query(
         if not merged.get(key):
             merged[key] = rule_query.get(key, [])
 
-    for key in ("max_minutes", "max_calories", "min_protein_pdv", "max_carbs_pdv"):
+    for key in ("max_minutes", "max_calories", "min_protein_pdv", "max_carbs_pdv", "max_total_budget"):
         if merged.get(key) is None:
             merged[key] = rule_query.get(key)
 

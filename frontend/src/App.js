@@ -183,8 +183,10 @@ function App() {
     max_calories: "",
     min_protein_pdv: "",
     max_carbs_pdv: "",
+    max_total_budget: "",
     search_text: "",
   });
+  const [useBudgetCap, setUseBudgetCap] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -273,6 +275,18 @@ function App() {
     setIncludeTagDraft("");
     setExcludeTagDraft("");
     setOptimizeMode("balanced");
+    setUseBudgetCap(false);
+    setManualFields({
+      num_meals: "4",
+      ingredient_keywords: "",
+      exclude_ingredients: "",
+      max_minutes: "",
+      max_calories: "",
+      min_protein_pdv: "",
+      max_carbs_pdv: "",
+      max_total_budget: "",
+      search_text: "",
+    });
     setPrompt(randomQuickPrompt());
     setPromptPrefilled(true);
   };
@@ -505,6 +519,10 @@ function App() {
           max_calories: manualFields.max_calories === "" ? null : Number(manualFields.max_calories),
           min_protein_pdv: manualFields.min_protein_pdv === "" ? null : Number(manualFields.min_protein_pdv),
           max_carbs_pdv: manualFields.max_carbs_pdv === "" ? null : Number(manualFields.max_carbs_pdv),
+          max_total_budget:
+            useBudgetCap && manualFields.max_total_budget !== ""
+              ? Number(manualFields.max_total_budget)
+              : null,
           search_text: String(manualFields.search_text || "").trim().toLowerCase(),
         },
       };
@@ -855,11 +873,17 @@ function App() {
       <div className="summary-row"><span className="summary-key">Max calories</span><span>{parsedQuery?.max_calories ?? "none"}</span></div>
       <div className="summary-row"><span className="summary-key">Min protein %DV</span><span>{parsedQuery?.min_protein_pdv ?? "none"}</span></div>
       <div className="summary-row"><span className="summary-key">Max carbs %DV</span><span>{parsedQuery?.max_carbs_pdv ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Budget cap (EUR)</span><span>{parsedQuery?.budget_cap ?? parsedQuery?.max_total_budget ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Estimated total (EUR)</span><span>{parsedQuery?.estimated_total ?? "none"}</span></div>
+      <div className="summary-row"><span className="summary-key">Budget status</span><span>{parsedQuery?.within_budget === false ? "over budget" : parsedQuery?.budget_cap != null ? "within budget" : "no cap"}</span></div>
       <div className="summary-row"><span className="summary-key">Mode</span><span>{parsedQuery?.input_mode || inputMode}</span></div>
       <div className="summary-row"><span className="summary-key">Parser</span><span>{parsedQuery?.parser_source || "rules"}</span></div>
       <div className="summary-row"><span className="summary-key">Optimization</span><span>{parsedQuery?.optimize_mode || optimizeMode}</span></div>
     </div>
   );
+
+  const budgetCapValue = parsedQuery?.budget_cap;
+  const showBudgetStatus = budgetCapValue !== null && budgetCapValue !== undefined;
 
   if (!accessToken) {
     return (
@@ -1082,6 +1106,27 @@ function App() {
                           onChange={(e) => setManualFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
                         />
                       </label>
+                      <label className="inline-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={useBudgetCap}
+                          onChange={(e) => setUseBudgetCap(e.target.checked)}
+                        />
+                        Use budget cap
+                      </label>
+                      {useBudgetCap && (
+                        <label className="label">
+                          Max total budget (EUR)
+                          <input
+                            className="input"
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={manualFields.max_total_budget}
+                            onChange={(e) => setManualFields((p) => ({ ...p, max_total_budget: e.target.value }))}
+                          />
+                        </label>
+                      )}
                     </div>
                   )}
 
@@ -1266,6 +1311,27 @@ function App() {
                         onChange={(e) => setManualFields((p) => ({ ...p, max_carbs_pdv: e.target.value }))}
                       />
                     </label>
+                    <label className="inline-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={useBudgetCap}
+                        onChange={(e) => setUseBudgetCap(e.target.checked)}
+                      />
+                      Use budget cap
+                    </label>
+                    {useBudgetCap && (
+                      <label className="label">
+                        Max total budget (EUR)
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={manualFields.max_total_budget}
+                          onChange={(e) => setManualFields((p) => ({ ...p, max_total_budget: e.target.value }))}
+                        />
+                      </label>
+                    )}
                   </div>
                 )}
 
@@ -1330,6 +1396,20 @@ function App() {
             <h2 className="panel-title">Recipes</h2>
             {mealPlan?.id && (
               <p className="panel-description">Hover a recipe card and click to swap that meal.</p>
+            )}
+            {showBudgetStatus && (
+              <div className={`budget-status ${parsedQuery?.within_budget === false ? "over" : "within"}`}>
+                <strong>
+                  {parsedQuery?.within_budget === false ? "Over budget" : "Within budget"}:
+                </strong>{" "}
+                cap EUR {parsedQuery?.budget_cap} | est EUR {parsedQuery?.estimated_total ?? "0.00"}
+                {parsedQuery?.budget_overrun > 0 && (
+                  <span> | overrun EUR {parsedQuery.budget_overrun}</span>
+                )}
+                {parsedQuery?.budget_warning && (
+                  <div className="panel-description">{parsedQuery.budget_warning}</div>
+                )}
+              </div>
             )}
             {!recipes.length && <p className="panel-description">No recipes yet.</p>}
             <div className="recipe-grid">

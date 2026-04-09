@@ -31,6 +31,7 @@ class Recipe(models.Model):
 
 class Ingredient(models.Model):
     name = models.CharField(max_length=128, unique=True, db_index=True)
+    estimated_unit_cost_eur = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
 
     def __str__(self):
         return self.name

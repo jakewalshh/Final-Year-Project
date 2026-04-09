@@ -8,7 +8,7 @@ from collections import defaultdict
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate
 from django.db import transaction
-from django.db.models import Count, Prefetch
+from django.db.models import Avg, Count, Max, Min, Prefetch
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, serializers, status
@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from recipes.models import Recipe, RecipeIngredient, RecipeStep, RecipeTag, Tag
+from recipes.models import Ingredient, Recipe, RecipeIngredient, RecipeStep, RecipeTag, Tag
 from recipes.planning import build_plan_queryset, parse_prompt_to_query, sanitize_query
 from recipes.views import _serialize_recipe
 
@@ -34,6 +34,19 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+def _percentile(sorted_values: list[float], q: float) -> float:
+    if not sorted_values:
+        return 0.0
+    q = max(0.0, min(1.0, float(q)))
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    rank = (len(sorted_values) - 1) * q
+    low = int(rank)
+    high = min(low + 1, len(sorted_values) - 1)
+    weight = rank - low
+    return float(sorted_values[low] * (1.0 - weight) + sorted_values[high] * weight)
 
 
 def _normalize_string_list(value) -> list[str]:
@@ -614,6 +627,51 @@ def _user_recipe_rating_map(user) -> dict[int, float]:
     return output
 
 
+def _budget_cap_value(parsed_query: dict) -> float | None:
+    cap = _to_optional_float(parsed_query.get("max_total_budget"))
+    if cap is None or cap <= 0:
+        return None
+    return round(float(cap), 2)
+
+
+def _estimate_recipe_cost_from_terms(
+    ingredient_terms: set[str],
+    *,
+    exact_lookup: dict[str, float] | None = None,
+    canonical_lookup: dict[str, float] | None = None,
+) -> float:
+    if not ingredient_terms:
+        return 0.75
+    total = 0.0
+    for term in ingredient_terms:
+        total += _estimate_item_cost_eur(term, exact_lookup=exact_lookup, canonical_lookup=canonical_lookup)
+    return round(total, 2)
+
+
+def _estimate_recipe_cost(
+    recipe: Recipe,
+    ingredient_terms: set[str] | None = None,
+    *,
+    exact_lookup: dict[str, float] | None = None,
+    canonical_lookup: dict[str, float] | None = None,
+) -> float:
+    ingredient_names = _recipe_ingredient_names(recipe)
+    if ingredient_names:
+        total = 0.0
+        for name in ingredient_names:
+            total += _estimate_item_cost_eur(name, exact_lookup=exact_lookup, canonical_lookup=canonical_lookup)
+        return round(total, 2)
+
+    terms = set(ingredient_terms or [])
+    if not terms:
+        return DEFAULT_UNKNOWN_INGREDIENT_COST_EUR
+    return _estimate_recipe_cost_from_terms(
+        terms,
+        exact_lookup=exact_lookup,
+        canonical_lookup=canonical_lookup,
+    )
+
+
 def _select_optimized_recipes(
     candidates: list[Recipe],
     parsed_query: dict,
@@ -629,6 +687,7 @@ def _select_optimized_recipes(
     base_weight = profile_config["base_weight"]
     overlap_weight = profile_config["overlap_weight"]
     diversity_penalty_scale = profile_config["diversity_penalty"]
+    budget_cap = _budget_cap_value(parsed_query)
 
     if not candidates:
         return [], {
@@ -640,10 +699,16 @@ def _select_optimized_recipes(
             "optimize_mode": optimize_mode,
             "weights": profile_config,
             "selection_seed": random_seed,
+            "budget_cap": budget_cap,
+            "estimated_total": 0.0,
+            "within_budget": True,
+            "budget_overrun": 0.0,
+            "budget_warning": "",
         }
 
     profiles = [_candidate_profile(recipe) for recipe in candidates]
     ingredient_frequency: dict[str, int] = {}
+    exact_cost_lookup, canonical_cost_lookup = _ingredient_cost_indexes()
     for profile in profiles:
         for term in profile["ingredients"]:
             ingredient_frequency[term] = ingredient_frequency.get(term, 0) + 1
@@ -651,6 +716,12 @@ def _select_optimized_recipes(
     anchor_terms, anchor_families = _anchor_targets(parsed_query)
 
     for profile in profiles:
+        profile["estimated_cost"] = _estimate_recipe_cost(
+            profile["recipe"],
+            profile["ingredients"],
+            exact_lookup=exact_cost_lookup,
+            canonical_lookup=canonical_cost_lookup,
+        )
         profile["metrics"] = _base_candidate_score(
             profile,
             ingredient_frequency=ingredient_frequency,
@@ -665,6 +736,7 @@ def _select_optimized_recipes(
     selected_profiles: list[dict] = []
     selected_recipes: list[Recipe] = []
     basket_terms: set[str] = set()
+    selected_estimated_total = 0.0
     score_trace = []
 
     while remaining and len(selected_recipes) < target_count:
@@ -681,10 +753,34 @@ def _select_optimized_recipes(
             )
             base_score = profile["metrics"]["base"]
             rating_adjustment = _rating_adjustment_for_recipe(profile["recipe"].id, recipe_rating_map)
+            recipe_estimated_cost = float(profile.get("estimated_cost") or 0.75)
+            projected_total = selected_estimated_total + recipe_estimated_cost
+            budget_adjustment = 0.0
+            budget_overrun = 0.0
+            within_budget_candidate = True
+            if budget_cap is not None:
+                if projected_total > budget_cap:
+                    within_budget_candidate = False
+                    budget_overrun = projected_total - budget_cap
+                    overrun_ratio = budget_overrun / max(1.0, budget_cap)
+                    budget_adjustment -= min(0.70, 0.22 + (overrun_ratio * 0.90))
+                else:
+                    remaining_budget = max(0.01, budget_cap - selected_estimated_total)
+                    spend_ratio = recipe_estimated_cost / remaining_budget
+                    tightness_penalty = max(0.0, spend_ratio - 0.45) * 0.10
+                    budget_adjustment -= min(0.14, tightness_penalty)
+                    leftover_ratio = (budget_cap - projected_total) / max(1.0, budget_cap)
+                    budget_adjustment += min(0.05, leftover_ratio * 0.05)
             if selected_profiles:
-                combined = (base_weight * base_score) + (overlap_weight * overlap) - penalty + rating_adjustment
+                combined = (
+                    (base_weight * base_score)
+                    + (overlap_weight * overlap)
+                    - penalty
+                    + rating_adjustment
+                    + budget_adjustment
+                )
             else:
-                combined = base_score + rating_adjustment
+                combined = base_score + rating_adjustment + budget_adjustment
             combined = _clamp_float(combined, -1.0, 1.0)
             scored_items.append(
                 {
@@ -693,16 +789,30 @@ def _select_optimized_recipes(
                     "combined": combined,
                     "base": base_score,
                     "rating_adjustment": rating_adjustment,
+                    "budget_adjustment": budget_adjustment,
                     "overlap": overlap,
                     "diversity_penalty": penalty,
+                    "recipe_estimated_cost": round(recipe_estimated_cost, 2),
+                    "projected_total": round(projected_total, 2),
+                    "within_budget_candidate": within_budget_candidate,
+                    "budget_overrun": round(max(0.0, budget_overrun), 2),
                 }
             )
 
-        scored_items.sort(
-            key=lambda item: (-item["combined"], item["profile"]["recipe"].id),
-        )
-        pool_size = min(len(scored_items), max(4, target_count * 4))
-        exploration_pool = scored_items[:pool_size]
+        if budget_cap is not None:
+            feasible = [item for item in scored_items if item["within_budget_candidate"]]
+            if feasible:
+                ranked_items = sorted(feasible, key=lambda item: (-item["combined"], item["profile"]["recipe"].id))
+            else:
+                ranked_items = sorted(
+                    scored_items,
+                    key=lambda item: (item["budget_overrun"], -item["combined"], item["profile"]["recipe"].id),
+                )
+        else:
+            ranked_items = sorted(scored_items, key=lambda item: (-item["combined"], item["profile"]["recipe"].id))
+
+        pool_size = min(len(ranked_items), max(4, target_count * 4))
+        exploration_pool = ranked_items[:pool_size]
         floor = min(item["combined"] for item in exploration_pool)
         weights = [max(0.001, (item["combined"] - floor) + 0.03) for item in exploration_pool]
         chosen_item = rng.choices(exploration_pool, weights=weights, k=1)[0]
@@ -711,8 +821,13 @@ def _select_optimized_recipes(
             "recipe_id": chosen_item["profile"]["recipe"].id,
             "base": round(chosen_item["base"], 4),
             "rating_adjustment": round(chosen_item["rating_adjustment"], 4),
+            "budget_adjustment": round(chosen_item["budget_adjustment"], 4),
             "overlap": round(chosen_item["overlap"], 4),
             "diversity_penalty": round(chosen_item["diversity_penalty"], 4),
+            "recipe_estimated_cost": round(chosen_item["recipe_estimated_cost"], 2),
+            "projected_total": round(chosen_item["projected_total"], 2),
+            "within_budget_candidate": chosen_item["within_budget_candidate"],
+            "budget_overrun": round(chosen_item["budget_overrun"], 2),
             "combined": round(chosen_item["combined"], 4),
             "pool_size": pool_size,
         }
@@ -721,6 +836,7 @@ def _select_optimized_recipes(
         selected_profiles.append(chosen)
         selected_recipes.append(chosen["recipe"])
         basket_terms.update(chosen["ingredients"])
+        selected_estimated_total += float(chosen.get("estimated_cost") or 0.75)
         score_trace.append(best_meta)
 
     if len(selected_profiles) <= 1:
@@ -734,6 +850,13 @@ def _select_optimized_recipes(
                 overlaps.append(_overlap_score(profile["ingredients"], other["ingredients"]))
         avg_overlap = round(sum(overlaps) / max(1, len(overlaps)), 4)
 
+    estimated_total = round(selected_estimated_total, 2)
+    within_budget = budget_cap is None or estimated_total <= (budget_cap + 1e-9)
+    budget_overrun = round(max(0.0, estimated_total - budget_cap), 2) if budget_cap is not None else 0.0
+    budget_warning = ""
+    if budget_cap is not None and not within_budget:
+        budget_warning = "Could not fully satisfy budget cap with current constraints; returned closest match."
+
     return selected_recipes, {
         "candidate_count": len(candidates),
         "selected_count": len(selected_recipes),
@@ -744,6 +867,11 @@ def _select_optimized_recipes(
         "weights": profile_config,
         "selection_seed": random_seed,
         "selection_trace": score_trace,
+        "budget_cap": budget_cap,
+        "estimated_total": estimated_total,
+        "within_budget": within_budget,
+        "budget_overrun": budget_overrun,
+        "budget_warning": budget_warning,
     }
 
 
@@ -811,6 +939,10 @@ def _query_with_fallbacks(
                 "avg_overlap": optimizer_meta.get("avg_overlap", 0.0),
                 "optimize_mode": optimizer_meta.get("optimize_mode", optimize_mode),
                 "selection_seed": optimizer_meta.get("selection_seed"),
+                "budget_cap": optimizer_meta.get("budget_cap"),
+                "estimated_total": optimizer_meta.get("estimated_total"),
+                "within_budget": optimizer_meta.get("within_budget"),
+                "budget_overrun": optimizer_meta.get("budget_overrun"),
             }
         )
         return selected, optimizer_meta
@@ -933,37 +1065,52 @@ def _collect_plan_ingredient_names(meal_plan: MealPlan) -> list[str]:
     return names
 
 
-DEFAULT_ITEM_COST_EUR = {
-    "chicken": 2.50,
-    "beef": 3.50,
-    "pork": 2.80,
-    "fish": 3.20,
-    "shrimp": 3.40,
-    "tofu": 1.80,
-    "egg": 0.45,
-    "rice": 0.55,
-    "pasta": 0.65,
-    "potato": 0.45,
-    "tomato": 0.50,
-    "onion": 0.35,
-    "garlic": 0.30,
-    "pepper": 0.40,
-    "salt": 0.10,
-    "oil": 0.55,
-    "butter": 0.80,
-    "milk": 0.90,
-    "cheese": 1.25,
-    "flour": 0.50,
-    "sugar": 0.45,
-    "bread": 1.00,
-}
+DEFAULT_UNKNOWN_INGREDIENT_COST_EUR = 0.75
 
 
-def _estimate_item_cost_eur(ingredient: str) -> float:
-    canonical = _canonical_ingredient_name(ingredient)
-    if canonical in DEFAULT_ITEM_COST_EUR:
-        return DEFAULT_ITEM_COST_EUR[canonical]
-    return 0.75
+def _ingredient_cost_indexes() -> tuple[dict[str, float], dict[str, float]]:
+    exact: dict[str, float] = {}
+    canonical_buckets: dict[str, list[float]] = defaultdict(list)
+
+    rows = Ingredient.objects.exclude(estimated_unit_cost_eur__isnull=True).values_list("name", "estimated_unit_cost_eur")
+    for name, cost in rows:
+        name_key = str(name or "").strip().lower()
+        if not name_key:
+            continue
+        cost_value = round(float(cost), 2)
+        exact[name_key] = cost_value
+        canonical = _canonical_ingredient_name(name_key)
+        if canonical:
+            canonical_buckets[canonical].append(cost_value)
+
+    canonical_avg = {
+        key: round(sum(values) / len(values), 2)
+        for key, values in canonical_buckets.items()
+        if values
+    }
+    return exact, canonical_avg
+
+
+def _estimate_item_cost_eur(
+    ingredient: str,
+    *,
+    exact_lookup: dict[str, float] | None = None,
+    canonical_lookup: dict[str, float] | None = None,
+) -> float:
+    name_key = str(ingredient or "").strip().lower()
+    if not name_key:
+        return DEFAULT_UNKNOWN_INGREDIENT_COST_EUR
+
+    if exact_lookup is None or canonical_lookup is None:
+        exact_lookup, canonical_lookup = _ingredient_cost_indexes()
+    if name_key in exact_lookup:
+        return exact_lookup[name_key]
+
+    canonical = _canonical_ingredient_name(name_key)
+    if canonical in canonical_lookup:
+        return canonical_lookup[canonical]
+
+    return DEFAULT_UNKNOWN_INGREDIENT_COST_EUR
 
 
 def _aggregate_shopping_items(rows: list[dict]) -> list[dict]:
@@ -1004,6 +1151,7 @@ def _aggregate_shopping_items(rows: list[dict]) -> list[dict]:
 def _enrich_items_with_costs(items: list[dict], currency: str = "EUR") -> tuple[list[dict], dict]:
     normalized_items = []
     estimated_total = 0.0
+    exact_lookup, canonical_lookup = _ingredient_cost_indexes()
     for item in items:
         ingredient = str(item.get("ingredient") or "").strip().lower()
         count = _to_int(item.get("count"), 1)
@@ -1013,7 +1161,23 @@ def _enrich_items_with_costs(items: list[dict], currency: str = "EUR") -> tuple[
 
         estimated_unit_cost = _to_optional_float(item.get("estimated_unit_cost"))
         if estimated_unit_cost is None:
-            estimated_unit_cost = _estimate_item_cost_eur(ingredient)
+            variant_costs = []
+            for variant in variants:
+                cost_value = _estimate_item_cost_eur(
+                    variant,
+                    exact_lookup=exact_lookup,
+                    canonical_lookup=canonical_lookup,
+                )
+                if cost_value is not None:
+                    variant_costs.append(float(cost_value))
+            if variant_costs:
+                estimated_unit_cost = round(sum(variant_costs) / len(variant_costs), 2)
+            else:
+                estimated_unit_cost = _estimate_item_cost_eur(
+                    ingredient,
+                    exact_lookup=exact_lookup,
+                    canonical_lookup=canonical_lookup,
+                )
 
         estimated_subtotal = _to_optional_float(item.get("estimated_subtotal"))
         if estimated_subtotal is None:
@@ -1261,6 +1425,77 @@ class TagListView(APIView):
         )
 
 
+class IngredientPricingReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        limit = _to_int(request.GET.get("limit"), 10)
+        limit = max(1, min(limit, 50))
+
+        total = Ingredient.objects.count()
+        priced_qs = Ingredient.objects.exclude(estimated_unit_cost_eur__isnull=True)
+        priced_count = priced_qs.count()
+        missing_qs = Ingredient.objects.filter(estimated_unit_cost_eur__isnull=True)
+        missing_count = total - priced_count
+        coverage_percent = round((priced_count / total) * 100.0, 2) if total else 0.0
+
+        stats = priced_qs.aggregate(
+            min_cost=Min("estimated_unit_cost_eur"),
+            max_cost=Max("estimated_unit_cost_eur"),
+            avg_cost=Avg("estimated_unit_cost_eur"),
+        )
+        values = sorted(float(v) for v in priced_qs.values_list("estimated_unit_cost_eur", flat=True))
+
+        most_common = []
+        common_rows = (
+            priced_qs.values("estimated_unit_cost_eur")
+            .annotate(count=Count("id"))
+            .order_by("-count", "estimated_unit_cost_eur")[:5]
+        )
+        for row in common_rows:
+            most_common.append(
+                {
+                    "cost_eur": round(float(row["estimated_unit_cost_eur"]), 2),
+                    "count": int(row["count"]),
+                }
+            )
+
+        missing_examples = list(missing_qs.order_by("name").values_list("name", flat=True)[:limit])
+        low_examples = list(
+            priced_qs.order_by("estimated_unit_cost_eur", "name").values("name", "estimated_unit_cost_eur")[:limit]
+        )
+        high_examples = list(
+            priced_qs.order_by("-estimated_unit_cost_eur", "name").values("name", "estimated_unit_cost_eur")[:limit]
+        )
+
+        return Response(
+            {
+                "ingredient_total": total,
+                "priced_total": priced_count,
+                "missing_total": missing_count,
+                "coverage_percent": coverage_percent,
+                "price_stats_eur": {
+                    "min": round(float(stats["min_cost"]), 2) if stats["min_cost"] is not None else None,
+                    "max": round(float(stats["max_cost"]), 2) if stats["max_cost"] is not None else None,
+                    "mean": round(float(stats["avg_cost"]), 2) if stats["avg_cost"] is not None else None,
+                    "median": round(_percentile(values, 0.5), 2) if values else None,
+                    "p10": round(_percentile(values, 0.10), 2) if values else None,
+                    "p90": round(_percentile(values, 0.90), 2) if values else None,
+                },
+                "most_common_prices": most_common,
+                "missing_examples": missing_examples,
+                "lowest_priced_examples": [
+                    {"name": str(row["name"]), "cost_eur": round(float(row["estimated_unit_cost_eur"]), 2)}
+                    for row in low_examples
+                ],
+                "highest_priced_examples": [
+                    {"name": str(row["name"]), "cost_eur": round(float(row["estimated_unit_cost_eur"]), 2)}
+                    for row in high_examples
+                ],
+            }
+        )
+
+
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -1412,7 +1647,19 @@ class GenerateMealPlanView(APIView):
                     "Filtered out non-meal candidates (e.g., sauces/snacks/desserts) before final selection."
                 )
 
-        parsed_query["parser_warnings"] = parser_warnings
+        budget_meta = fallback_meta.get("optimizer", {}) or {}
+        parsed_query["budget_cap"] = budget_meta.get("budget_cap")
+        parsed_query["estimated_total"] = budget_meta.get("estimated_total", 0.0)
+        parsed_query["within_budget"] = budget_meta.get("within_budget", True)
+        parsed_query["budget_overrun"] = budget_meta.get("budget_overrun", 0.0)
+        budget_warning = str(budget_meta.get("budget_warning") or "").strip()
+        if budget_warning:
+            parsed_query["budget_warning"] = budget_warning
+            parser_warnings.append(budget_warning)
+        else:
+            parsed_query.pop("budget_warning", None)
+
+        parsed_query["parser_warnings"] = list(dict.fromkeys(parser_warnings))
 
         with transaction.atomic():
             title = f"Plan {MealPlan.objects.filter(user=request.user).count() + 1}"

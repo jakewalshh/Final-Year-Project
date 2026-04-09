@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 from recipes.models import Ingredient, Recipe, RecipeIngredient, RecipeTag, Tag
 
 from .models import MealPlan, MealPlanItem, ShoppingList, UserPreference
-from .views import _build_shopping_items_openai, _filter_meal_candidates, _select_optimized_recipes
+from .views import _build_shopping_items_openai, _estimate_recipe_cost, _filter_meal_candidates, _select_optimized_recipes
 
 User = get_user_model()
 
@@ -29,7 +29,7 @@ class PlannerApiTests(APITestCase):
             n_ingredients=6,
             n_steps=4,
         )
-        ingredient_tofu = Ingredient.objects.create(name="tofu")
+        ingredient_tofu = Ingredient.objects.create(name="tofu", estimated_unit_cost_eur=1.80)
         RecipeIngredient.objects.create(recipe=self.recipe, ingredient=ingredient_tofu, position=1)
         vegetarian = Tag.objects.create(name="vegetarian")
         RecipeTag.objects.create(recipe=self.recipe, tag=vegetarian)
@@ -137,6 +137,7 @@ class PlannerApiTests(APITestCase):
                     "max_calories": 600,
                     "min_protein_pdv": 10,
                     "max_carbs_pdv": 80,
+                    "max_total_budget": 20,
                     "search_text": "",
                 },
                 "optimize_mode": "balanced",
@@ -147,6 +148,85 @@ class PlannerApiTests(APITestCase):
         self.assertEqual(gen_resp.data["query"]["input_mode"], "manual")
         self.assertEqual(gen_resp.data["query"]["parser_source"], "manual")
         self.assertFalse(gen_resp.data["no_results"])
+        self.assertEqual(gen_resp.data["query"]["max_total_budget"], 20.0)
+        self.assertEqual(gen_resp.data["query"]["budget_cap"], 20.0)
+        self.assertTrue(gen_resp.data["query"]["within_budget"])
+
+    def test_generate_plan_budget_cap_feasible(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "manual",
+                "manual_query": {
+                    "num_meals": 1,
+                    "ingredient_keywords": ["tofu"],
+                    "include_tags": ["vegetarian"],
+                    "exclude_tags": [],
+                    "exclude_ingredients": [],
+                    "max_minutes": 30,
+                    "max_total_budget": 10,
+                },
+                "optimize_mode": "budget",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        self.assertFalse(gen_resp.data["no_results"])
+        self.assertEqual(gen_resp.data["query"]["budget_cap"], 10.0)
+        self.assertTrue(gen_resp.data["query"]["within_budget"])
+        self.assertLessEqual(float(gen_resp.data["query"]["estimated_total"]), 10.0)
+        self.assertEqual(float(gen_resp.data["meal_plan"]["parsed_query"]["budget_cap"]), 10.0)
+
+    def test_generate_plan_budget_cap_infeasible_returns_warning(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "manual",
+                "manual_query": {
+                    "num_meals": 1,
+                    "ingredient_keywords": ["tofu"],
+                    "include_tags": ["vegetarian"],
+                    "exclude_tags": [],
+                    "exclude_ingredients": [],
+                    "max_minutes": 30,
+                    "max_total_budget": 1,
+                },
+                "optimize_mode": "budget",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        self.assertFalse(gen_resp.data["no_results"])
+        self.assertEqual(gen_resp.data["query"]["budget_cap"], 1.0)
+        self.assertFalse(gen_resp.data["query"]["within_budget"])
+        self.assertGreater(float(gen_resp.data["query"]["budget_overrun"]), 0.0)
+        self.assertTrue(str(gen_resp.data["query"].get("budget_warning") or "").strip())
+
+    def test_generate_plan_no_budget_cap_keeps_normal_behavior(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "manual",
+                "manual_query": {
+                    "num_meals": 1,
+                    "ingredient_keywords": ["tofu"],
+                    "include_tags": ["vegetarian"],
+                    "exclude_tags": [],
+                    "exclude_ingredients": [],
+                    "max_minutes": 30,
+                    "max_total_budget": None,
+                },
+                "optimize_mode": "balanced",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        self.assertFalse(gen_resp.data["no_results"])
+        self.assertIsNone(gen_resp.data["query"]["budget_cap"])
+        self.assertTrue(gen_resp.data["query"]["within_budget"])
 
     def test_generate_plan_manual_mode_requires_manual_query_object(self):
         self._register_and_login()
@@ -166,6 +246,23 @@ class PlannerApiTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("tags", resp.data)
         self.assertIn("vegetarian", resp.data["tags"])
+
+    def test_ingredient_pricing_report_endpoint(self):
+        self._register_and_login()
+        Ingredient.objects.update_or_create(
+            name="report test ingredient",
+            defaults={"estimated_unit_cost_eur": 1.23},
+        )
+        resp = self.client.get(reverse("ingredient-pricing-report"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("ingredient_total", resp.data)
+        self.assertIn("priced_total", resp.data)
+        self.assertIn("coverage_percent", resp.data)
+        self.assertIn("price_stats_eur", resp.data)
+        self.assertIn("most_common_prices", resp.data)
+        self.assertIn("missing_examples", resp.data)
+        self.assertIn("lowest_priced_examples", resp.data)
+        self.assertIn("highest_priced_examples", resp.data)
 
     def test_shopping_list_condenses_ingredient_variants(self):
         self._register_and_login()
@@ -389,6 +486,51 @@ class PlannerApiTests(APITestCase):
         self.assertEqual(len(selected), 2)
         self.assertEqual({recipe.name for recipe in selected}, {"Chicken Rice Bowl", "Chicken Curry"})
         self.assertIn("poultry", meta["anchor_families"])
+
+    def test_recipe_cost_estimation_known_and_unknown(self):
+        Ingredient.objects.create(name="chicken", estimated_unit_cost_eur=2.50)
+        Ingredient.objects.create(name="rice", estimated_unit_cost_eur=0.55)
+        known = Recipe.objects.create(
+            name="Known Cost Recipe",
+            ingredients="chicken, rice",
+            instructions="Cook",
+            minutes=20,
+            external_id=32921,
+        )
+        unknown = Recipe.objects.create(
+            name="Unknown Cost Recipe",
+            ingredients="mystery powder",
+            instructions="Cook",
+            minutes=20,
+            external_id=32922,
+        )
+        self.assertAlmostEqual(_estimate_recipe_cost(known), 3.05, places=2)
+        self.assertAlmostEqual(_estimate_recipe_cost(unknown), 0.75, places=2)
+
+    def test_optimizer_budget_metadata_estimated_total_matches_selected(self):
+        cheap = Recipe.objects.create(
+            name="Cheap Rice Bowl",
+            ingredients="rice, onion",
+            instructions="Cook",
+            minutes=20,
+            external_id=32931,
+        )
+        expensive = Recipe.objects.create(
+            name="Premium Steak Bowl",
+            ingredients="beef, rice, butter",
+            instructions="Cook",
+            minutes=20,
+            external_id=32932,
+        )
+
+        selected, meta = _select_optimized_recipes(
+            [cheap, expensive],
+            {"num_meals": 1, "max_total_budget": 10},
+            optimize_mode="budget",
+            random_seed=5,
+        )
+        selected_total = sum(_estimate_recipe_cost(recipe) for recipe in selected)
+        self.assertAlmostEqual(meta["estimated_total"], round(selected_total, 2), places=2)
 
     def test_optimizer_prefers_shared_budget_ingredients(self):
         bean_1 = Recipe.objects.create(

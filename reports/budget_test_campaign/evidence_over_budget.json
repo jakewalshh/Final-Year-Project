@@ -1,0 +1,456 @@
+{
+  "case": 5,
+  "request": {
+    "input_mode": "manual",
+    "optimize_mode": "budget",
+    "manual_query": {
+      "num_meals": 4,
+      "ingredient_keywords": [
+        "chicken"
+      ],
+      "include_tags": [],
+      "exclude_tags": [],
+      "exclude_ingredients": [],
+      "max_minutes": 45,
+      "max_calories": null,
+      "min_protein_pdv": null,
+      "max_carbs_pdv": null,
+      "max_total_budget": 40,
+      "search_text": ""
+    }
+  },
+  "response": {
+    "meal_plan": {
+      "id": 128,
+      "title": "Plan 5",
+      "source_prompt": "[manual criteria]",
+      "parsed_query": {
+        "num_meals": 4,
+        "ingredient_keywords": [
+          "chicken"
+        ],
+        "include_tags": [],
+        "exclude_tags": [],
+        "max_minutes": 45,
+        "max_calories": null,
+        "min_protein_pdv": null,
+        "max_carbs_pdv": null,
+        "max_total_budget": 40.0,
+        "search_text": "",
+        "exclude_ingredients": [],
+        "parser_source": "manual",
+        "parser_warnings": [
+          "Filtered out non-meal candidates (e.g., sauces/snacks/desserts) before final selection.",
+          "Could not fully satisfy budget cap with current constraints; returned closest match."
+        ],
+        "budget_cap": 40.0,
+        "estimated_total": 52.52,
+        "within_budget": false,
+        "budget_overrun": 12.52,
+        "budget_warning": "Could not fully satisfy budget cap with current constraints; returned closest match."
+      },
+      "is_completed": false,
+      "completed_at": null,
+      "rated_count": 0,
+      "total_count": 4,
+      "created_at": "2026-04-09T16:29:02.695489Z",
+      "updated_at": "2026-04-09T16:29:02.695492Z",
+      "items": [
+        {
+          "position": 1,
+          "recipe_id": 429,
+          "recipe_name": "amigos  crisp chicken burritos",
+          "rating": null,
+          "rated_at": null,
+          "feedback_note": ""
+        },
+        {
+          "position": 2,
+          "recipe_id": 780,
+          "recipe_name": "my own lazy day recipe   chicken noodle soup",
+          "rating": null,
+          "rated_at": null,
+          "feedback_note": ""
+        },
+        {
+          "position": 3,
+          "recipe_id": 1098,
+          "recipe_name": "15 minute microwaved rice",
+          "rating": null,
+          "rated_at": null,
+          "feedback_note": ""
+        },
+        {
+          "position": 4,
+          "recipe_id": 207,
+          "recipe_name": "steamed  chicken cutlets in packages",
+          "rating": null,
+          "rated_at": null,
+          "feedback_note": ""
+        }
+      ]
+    },
+    "query": {
+      "num_meals": 4,
+      "ingredient_keywords": [
+        "chicken"
+      ],
+      "include_tags": [],
+      "exclude_tags": [],
+      "max_minutes": 45,
+      "max_calories": null,
+      "min_protein_pdv": null,
+      "max_carbs_pdv": null,
+      "max_total_budget": 40.0,
+      "search_text": "",
+      "exclude_ingredients": [],
+      "parser_source": "manual",
+      "parser_warnings": [
+        "Filtered out non-meal candidates (e.g., sauces/snacks/desserts) before final selection.",
+        "Could not fully satisfy budget cap with current constraints; returned closest match."
+      ],
+      "budget_cap": 40.0,
+      "estimated_total": 52.52,
+      "within_budget": false,
+      "budget_overrun": 12.52,
+      "budget_warning": "Could not fully satisfy budget cap with current constraints; returned closest match.",
+      "ingredient_keyword": "chicken",
+      "optimize_mode": "budget",
+      "selection_seed": null,
+      "fallback": {
+        "attempts": [
+          {
+            "stage": "initial",
+            "candidate_count": 83,
+            "raw_candidate_count": 100,
+            "hard_non_meal_removed": 15,
+            "strict_candidate_count": 83,
+            "relaxed_candidate_count": 84,
+            "selected_count": 4,
+            "avg_overlap": 0.2489,
+            "optimize_mode": "budget",
+            "selection_seed": null,
+            "budget_cap": 40.0,
+            "estimated_total": 52.52,
+            "within_budget": false,
+            "budget_overrun": 12.52
+          }
+        ],
+        "resolved_stage": "initial",
+        "optimizer": {
+          "candidate_count": 83,
+          "selected_count": 4,
+          "avg_overlap": 0.2489,
+          "anchor_terms": [
+            "chicken"
+          ],
+          "anchor_families": [
+            "poultry"
+          ],
+          "optimize_mode": "budget",
+          "weights": {
+            "base_weight": 0.55,
+            "overlap_weight": 0.45,
+            "diversity_penalty": 0.08,
+            "component_weights": {
+              "anchor": 0.3,
+              "affordability": 0.42,
+              "sustainability": 0.1,
+              "meal_quality": 0.18
+            }
+          },
+          "selection_seed": null,
+          "selection_trace": [
+            {
+              "recipe_id": 429,
+              "base": 0.7577,
+              "rating_adjustment": 0.0,
+              "budget_adjustment": 0.0338,
+              "overlap": 0.0,
+              "diversity_penalty": 0.0,
+              "recipe_estimated_cost": 13.0,
+              "projected_total": 13.0,
+              "within_budget_candidate": true,
+              "budget_overrun": 0.0,
+              "combined": 0.7915,
+              "pool_size": 16
+            },
+            {
+              "recipe_id": 780,
+              "base": 0.7653,
+              "rating_adjustment": 0.0,
+              "budget_adjustment": -0.0175,
+              "overlap": 0.2,
+              "diversity_penalty": 0.0,
+              "recipe_estimated_cost": 19.42,
+              "projected_total": 32.42,
+              "within_budget_candidate": true,
+              "budget_overrun": 0.0,
+              "combined": 0.4935,
+              "pool_size": 16
+            },
+            {
+              "recipe_id": 1098,
+              "base": 0.7549,
+              "rating_adjustment": 0.0,
+              "budget_adjustment": -0.0105,
+              "overlap": 0.1864,
+              "diversity_penalty": 0.0,
+              "recipe_estimated_cost": 4.5,
+              "projected_total": 36.92,
+              "within_budget_candidate": true,
+              "budget_overrun": 0.0,
+              "combined": 0.4885,
+              "pool_size": 1
+            },
+            {
+              "recipe_id": 207,
+              "base": 0.7689,
+              "rating_adjustment": 0.0,
+              "budget_adjustment": -0.5017,
+              "overlap": 0.3371,
+              "diversity_penalty": 0.0,
+              "recipe_estimated_cost": 15.6,
+              "projected_total": 52.52,
+              "within_budget_candidate": false,
+              "budget_overrun": 12.52,
+              "combined": 0.0729,
+              "pool_size": 16
+            }
+          ],
+          "budget_cap": 40.0,
+          "estimated_total": 52.52,
+          "within_budget": false,
+          "budget_overrun": 12.52,
+          "budget_warning": "Could not fully satisfy budget cap with current constraints; returned closest match."
+        }
+      },
+      "input_mode": "manual"
+    },
+    "recipes": [
+      {
+        "id": 429,
+        "external_id": 168590,
+        "name": "amigos  crisp chicken burritos",
+        "description": "this rolled up chicken burrito is fried. it has a delicious moist chicken stuffing with a nicely crisp flour tortilla wrapped around it. it is so easy to make with only 4 ingredients.",
+        "minutes": 12,
+        "n_ingredients": 6,
+        "n_steps": 13,
+        "ingredients": [
+          "canned chicken",
+          "green chilies",
+          "cream cheese",
+          "green onions",
+          "flour tortillas",
+          "cooking oil"
+        ],
+        "instructions": [
+          "let cream cheese come to room temperature",
+          "drain the canned chicken",
+          "mix cream cheese , green chiles , green onion and chicken until well blended",
+          "cut two sides of the tortillas so you have two straight sides on each side",
+          "spread chicken mixture thinly on 3 / 4 of the tortilla",
+          "roll tortilla up starting with the end you spread the chicken mixture on",
+          "seal the plain end with water",
+          "heat oil to about 375-400 degrees",
+          "drop burritos into hot oil and fry for about 2 minutes",
+          "keep turning so they fry evenly",
+          "when they start to turn golden , they are done",
+          "drain on a paper plate covered with a paper towel",
+          "these are so easy and goes great with salsa , guacamole , or ranch dressing"
+        ],
+        "tags": [
+          "15-minutes-or-less",
+          "time-to-make",
+          "course",
+          "cuisine",
+          "preparation",
+          "north-american",
+          "main-dish",
+          "mexican",
+          "easy",
+          "beginner-cook",
+          "south-american",
+          "dietary",
+          "one-dish-meal",
+          "low-carb",
+          "low-in-something"
+        ],
+        "nutrition": {
+          "calories": 2453.4,
+          "total_fat_pdv": 383.0,
+          "sugar_pdv": 17.0,
+          "sodium_pdv": 41.0,
+          "protein_pdv": 62.0,
+          "saturated_fat_pdv": 211.0,
+          "carbohydrates_pdv": 9.0
+        }
+      },
+      {
+        "id": 780,
+        "external_id": 15063,
+        "name": "my own lazy day recipe   chicken noodle soup",
+        "description": "i made this up one day when i wanted some old-fashioned tasting chicken soup without all the bother and i love it.",
+        "minutes": 35,
+        "n_ingredients": 6,
+        "n_steps": 4,
+        "ingredients": [
+          "boneless skinless chicken breasts",
+          "carrot",
+          "water",
+          "fat free chicken broth",
+          "cream of chicken soup",
+          "dry fettuccine"
+        ],
+        "instructions": [
+          "grate carrot and cook with chicken in chicken broth and 4 cups water",
+          "cook chicken about 10 minutes then add noodles and cook till done",
+          "add cream of chicken soup and cook about 5 minutes longer",
+          "mmm mmm good"
+        ],
+        "tags": [
+          "60-minutes-or-less",
+          "time-to-make",
+          "course",
+          "main-ingredient",
+          "preparation",
+          "healthy",
+          "soups-stews",
+          "poultry",
+          "easy",
+          "low-fat",
+          "chicken",
+          "dietary",
+          "low-saturated-fat",
+          "low-calorie",
+          "low-in-something",
+          "meat",
+          "chicken-breasts",
+          "pasta-rice-and-grains"
+        ],
+        "nutrition": {
+          "calories": 315.2,
+          "total_fat_pdv": 10.0,
+          "sugar_pdv": 7.0,
+          "sodium_pdv": 28.0,
+          "protein_pdv": 36.0,
+          "saturated_fat_pdv": 8.0,
+          "carbohydrates_pdv": 15.0
+        }
+      },
+      {
+        "id": 1098,
+        "external_id": 204040,
+        "name": "15 minute microwaved rice",
+        "description": "very easy and fast!  great when you don't have time to keep checking your rice!!! from ricardo's magazine.",
+        "minutes": 20,
+        "n_ingredients": 3,
+        "n_steps": 6,
+        "ingredients": [
+          "basmati rice",
+          "chicken broth",
+          "salt and pepper"
+        ],
+        "instructions": [
+          "place the rice in a strainer and rinse it well under cold running water",
+          "combine the rice and broth in a microwave-safe bowl",
+          "season with salt and pepper",
+          "place the bowl in the oven and microwave on high power for about 15 minutes",
+          "stir",
+          "cover and let rest for 10 minutes"
+        ],
+        "tags": [
+          "30-minutes-or-less",
+          "time-to-make",
+          "main-ingredient",
+          "preparation",
+          "healthy",
+          "5-ingredients-or-less",
+          "rice",
+          "easy",
+          "low-fat",
+          "dietary",
+          "low-cholesterol",
+          "low-saturated-fat",
+          "low-in-something",
+          "pasta-rice-and-grains",
+          "white-rice"
+        ],
+        "nutrition": {
+          "calories": 187.9,
+          "total_fat_pdv": 3.0,
+          "sugar_pdv": 2.0,
+          "sodium_pdv": 14.0,
+          "protein_pdv": 11.0,
+          "saturated_fat_pdv": 2.0,
+          "carbohydrates_pdv": 12.0
+        }
+      },
+      {
+        "id": 207,
+        "external_id": 98930,
+        "name": "steamed  chicken cutlets in packages",
+        "description": "this creates a great aroma when the packages are first opened at the table--the packages hold the flavors in the chicken. i'm a huge chicken fan, and this is a very simple but tasty way to serve it.",
+        "minutes": 35,
+        "n_ingredients": 6,
+        "n_steps": 11,
+        "ingredients": [
+          "boneless skinless chicken breast",
+          "tomatoes",
+          "dried basil",
+          "olive oil",
+          "lime juice",
+          "salt and pepper"
+        ],
+        "instructions": [
+          "preheat oven to 450f",
+          "rinse the chicken breasts , and either cut or pound the chicken to create cutlets of about equal size",
+          "tear off squares of aluminum foil and place each chicken breast on a square",
+          "slice the tomato and place a slice or two atop of each breast",
+          "drizzle the chicken with the olive oil",
+          "sprinkle the basil on top of the chicken breasts evenly",
+          "add salt and pepper to each breast",
+          "loosely fold up the foil over each cutlet , leaving both room for air space but folded up enough not to allow oil to drip out",
+          "place all packages in a large baking dish and bake for 20 minutes",
+          "serve while still packaged",
+          "allow each diner to open his / her package at the table"
+        ],
+        "tags": [
+          "60-minutes-or-less",
+          "time-to-make",
+          "course",
+          "main-ingredient",
+          "preparation",
+          "occasion",
+          "very-low-carbs",
+          "main-dish",
+          "poultry",
+          "oven",
+          "dinner-party",
+          "chicken",
+          "dietary",
+          "low-sodium",
+          "low-saturated-fat",
+          "high-protein",
+          "low-carb",
+          "inexpensive",
+          "high-in-something",
+          "low-in-something",
+          "meat",
+          "chicken-breasts",
+          "equipment"
+        ],
+        "nutrition": {
+          "calories": 190.5,
+          "total_fat_pdv": 12.0,
+          "sugar_pdv": 3.0,
+          "sodium_pdv": 3.0,
+          "protein_pdv": 53.0,
+          "saturated_fat_pdv": 6.0,
+          "carbohydrates_pdv": 0.0
+        }
+      }
+    ],
+    "no_results": false
+  }
+}
