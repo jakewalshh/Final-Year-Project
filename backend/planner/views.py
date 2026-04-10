@@ -1286,8 +1286,6 @@ def _build_shopping_items_openai(ingredient_names: list[str], openai_client, mod
         normalized_rows, summary = _enrich_items_with_costs(normalized_rows, currency="EUR")
         parsed_summary = parsed.get("cost_summary")
         if isinstance(parsed_summary, dict):
-            if _to_optional_float(parsed_summary.get("estimated_total")) is not None:
-                summary["estimated_total"] = round(float(parsed_summary.get("estimated_total")), 2)
             if str(parsed_summary.get("notes") or "").strip():
                 summary["notes"] = str(parsed_summary.get("notes")).strip()
 
@@ -1343,9 +1341,6 @@ def _normalize_shopping_payload(raw_items) -> dict:
             normalized_items, summary = _enrich_items_with_costs(raw_list, currency="EUR")
             cost_summary = raw_items.get("cost_summary")
             if isinstance(cost_summary, dict):
-                total = _to_optional_float(cost_summary.get("estimated_total"))
-                if total is not None:
-                    summary["estimated_total"] = round(total, 2)
                 notes = str(cost_summary.get("notes") or "").strip()
                 if notes:
                     summary["notes"] = notes
@@ -1375,6 +1370,32 @@ def _normalize_shopping_payload(raw_items) -> dict:
 
 def _shopping_response_payload(shopping: ShoppingList) -> dict:
     payload = _normalize_shopping_payload(shopping.items)
+    cost_summary = payload.get("cost_summary")
+    if not isinstance(cost_summary, dict):
+        cost_summary = {"estimated_total": 0.0, "currency": "EUR", "notes": ""}
+        payload["cost_summary"] = cost_summary
+
+    itemized_total = _to_optional_float(cost_summary.get("estimated_total"))
+    plan_query = shopping.meal_plan.parsed_query if isinstance(shopping.meal_plan.parsed_query, dict) else {}
+    plan_estimated_total = _to_optional_float(plan_query.get("estimated_total"))
+
+    if plan_estimated_total is not None:
+        payload["total_source"] = "plan_generation"
+        payload["plan_estimated_total"] = round(float(plan_estimated_total), 2)
+        payload["itemized_estimated_total"] = round(float(itemized_total), 2) if itemized_total is not None else None
+        cost_summary["estimated_total"] = round(float(plan_estimated_total), 2)
+
+        source_note = "Primary total uses meal plan estimate for consistency with generation."
+        existing_notes = str(cost_summary.get("notes") or "").strip()
+        if source_note not in existing_notes:
+            cost_summary["notes"] = (
+                f"{source_note} {existing_notes}".strip() if existing_notes else source_note
+            )
+    else:
+        payload["total_source"] = "shopping_items"
+        payload["plan_estimated_total"] = None
+        payload["itemized_estimated_total"] = round(float(itemized_total), 2) if itemized_total is not None else None
+
     payload["meal_plan"] = shopping.meal_plan_id
     payload["created_at"] = shopping.created_at
     return payload
@@ -1611,6 +1632,16 @@ class GenerateMealPlanView(APIView):
                 use_openai_parser=use_openai_parser,
                 openai_client=client,
             )
+            explicit_budget_cap = _to_optional_float(request.data.get("max_total_budget"))
+            if explicit_budget_cap is not None:
+                parsed_query = sanitize_query(
+                    {
+                        **parsed_query,
+                        "max_total_budget": explicit_budget_cap,
+                        "parser_source": parsed_query.get("parser_source", "rules"),
+                        "parser_warnings": parsed_query.get("parser_warnings", []),
+                    }
+                )
 
         preference = UserPreference.objects.filter(user=request.user).first()
         parsed_query = _merge_preference_constraints(parsed_query, preference)

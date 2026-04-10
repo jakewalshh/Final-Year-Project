@@ -120,6 +120,13 @@ class PlannerApiTests(APITestCase):
         list_resp = self.client.post(reverse("shopping-list", args=[plan_id]), {}, format="json")
         self.assertEqual(list_resp.status_code, 200)
         self.assertTrue(ShoppingList.objects.filter(meal_plan_id=plan_id).exists())
+        self.assertEqual(list_resp.data.get("total_source"), "plan_generation")
+        self.assertAlmostEqual(
+            float(list_resp.data["cost_summary"]["estimated_total"]),
+            float(gen_resp.data["query"]["estimated_total"]),
+            places=2,
+        )
+        self.assertIn("itemized_estimated_total", list_resp.data)
 
     def test_generate_plan_manual_mode(self):
         self._register_and_login()
@@ -177,6 +184,23 @@ class PlannerApiTests(APITestCase):
         self.assertTrue(gen_resp.data["query"]["within_budget"])
         self.assertLessEqual(float(gen_resp.data["query"]["estimated_total"]), 10.0)
         self.assertEqual(float(gen_resp.data["meal_plan"]["parsed_query"]["budget_cap"]), 10.0)
+
+    def test_generate_plan_prompt_mode_accepts_explicit_budget_cap(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "prompt",
+                "prompt": "Create 1 vegetarian meal with tofu",
+                "max_total_budget": 10,
+                "optimize_mode": "budget",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        self.assertFalse(gen_resp.data["no_results"])
+        self.assertEqual(float(gen_resp.data["query"]["max_total_budget"]), 10.0)
+        self.assertEqual(float(gen_resp.data["query"]["budget_cap"]), 10.0)
 
     def test_generate_plan_budget_cap_infeasible_returns_warning(self):
         self._register_and_login()
@@ -314,7 +338,7 @@ class PlannerApiTests(APITestCase):
                 '{"ingredient":"salt","count":2,"variants":["salt and pepper","salt"],"estimated_unit_cost":0.10,"estimated_subtotal":0.20,"currency":"EUR","confidence":0.8},'
                 '{"ingredient":"pepper","count":1,"variants":["salt and pepper"],"estimated_unit_cost":0.30,"estimated_subtotal":0.30,"currency":"EUR","confidence":0.8},'
                 '{"ingredient":"chicken","count":2,"variants":["chicken breast","chichken thighs"],"estimated_unit_cost":2.50,"estimated_subtotal":5.00,"currency":"EUR","confidence":0.9}'
-                '], "cost_summary":{"estimated_total":5.50,"currency":"EUR","notes":"rough"}}'
+                '], "cost_summary":{"estimated_total":999.99,"currency":"EUR","notes":"rough"}}'
             )
 
         class _FakeChoice:
@@ -346,7 +370,7 @@ class PlannerApiTests(APITestCase):
         self.assertEqual(item_map["salt"]["count"], 2)
         self.assertEqual(item_map["pepper"]["count"], 1)
         self.assertEqual(item_map["chicken"]["count"], 2)
-        self.assertGreater(items["cost_summary"]["estimated_total"], 0)
+        self.assertAlmostEqual(items["cost_summary"]["estimated_total"], 5.50, places=2)
 
     def test_rate_meal_and_plan_completion(self):
         self._register_and_login()

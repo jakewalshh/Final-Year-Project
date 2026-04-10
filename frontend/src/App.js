@@ -129,23 +129,19 @@ const buildShoppingListExportText = (shoppingList, planLabel = "") => {
   const items = Array.isArray(shoppingList?.items) ? shoppingList.items : [];
   const currency = shoppingList?.cost_summary?.currency || "EUR";
   const total = toMoney(shoppingList?.cost_summary?.estimated_total ?? 0);
-  const source = shoppingList?.estimate_source || "rules";
   const notes = String(shoppingList?.cost_summary?.notes || "").trim();
   const heading = planLabel ? `Panion Shopping List - ${planLabel}` : "Panion Shopping List";
 
   const lines = [
     heading,
-    `Estimated Total: ${currency} ${total} (rough estimate, source: ${source})`,
+    `Estimated Total (Plan-Level Budget): ${currency} ${total}`,
     "",
     "Items",
   ];
 
   for (const item of items) {
     const ingredient = capitalizeFirstLetter(item?.ingredient || "Unknown item");
-    const count = Number(item?.count) || 1;
-    const subtotal = toMoney(item?.estimated_subtotal ?? 0);
-    const unit = toMoney(item?.estimated_unit_cost ?? 0);
-    lines.push(`- [ ] ${ingredient} x${count} (${currency} ${unit} each, ~${currency} ${subtotal})`);
+    lines.push(`- [ ] ${ingredient}`);
   }
 
   if (notes) {
@@ -533,6 +529,10 @@ function App() {
       include_tags: includeTags,
       exclude_tags: excludeTags,
       optimize_mode: optimizeMode,
+      max_total_budget:
+        useBudgetCap && manualFields.max_total_budget !== ""
+          ? Number(manualFields.max_total_budget)
+          : null,
     };
   };
 
@@ -1020,6 +1020,27 @@ function App() {
                         Prompt
                         <textarea className="textarea" value={prompt} onChange={(e) => handlePromptChange(e.target.value)} />
                       </label>
+                      <label className="inline-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={useBudgetCap}
+                          onChange={(e) => setUseBudgetCap(e.target.checked)}
+                        />
+                        Use budget cap
+                      </label>
+                      {useBudgetCap && (
+                        <label className="label">
+                          Max total budget (EUR)
+                          <input
+                            className="input"
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={manualFields.max_total_budget}
+                            onChange={(e) => setManualFields((p) => ({ ...p, max_total_budget: e.target.value }))}
+                          />
+                        </label>
+                      )}
                       <div className="quick-prompts">
                         {QUICK_PROMPTS.slice(0, 6).map((x) => (
                           <button key={x} type="button" className="quick-prompt" onClick={() => handlePromptChange(x)}>
@@ -1226,6 +1247,27 @@ function App() {
                         onChange={(e) => handlePromptChange(e.target.value)}
                       />
                     </label>
+                    <label className="inline-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={useBudgetCap}
+                        onChange={(e) => setUseBudgetCap(e.target.checked)}
+                      />
+                      Use budget cap
+                    </label>
+                    {useBudgetCap && (
+                      <label className="label narrow-label">
+                        Max total budget (EUR)
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={manualFields.max_total_budget}
+                          onChange={(e) => setManualFields((p) => ({ ...p, max_total_budget: e.target.value }))}
+                        />
+                      </label>
+                    )}
                     <div className="suggestion-row">
                       <span className="panel-description">{promptPrefilled ? "Suggestion loaded" : "Type your own request"}</span>
                       <button type="button" className="button secondary" onClick={handleNewSuggestion}>
@@ -1664,10 +1706,7 @@ function App() {
 
               <div className="list-item shopping-summary-card">
                 <div>
-                  <strong>Estimated Total</strong>
-                  <div className="panel-description">
-                    Source: {shoppingList.estimate_source || "rules"} | Rough estimate
-                  </div>
+                  <strong>Estimated Total (Plan-Level Budget)</strong>
                   {shoppingList.cost_summary?.notes && (
                     <div className="panel-description">{shoppingList.cost_summary.notes}</div>
                   )}
@@ -1686,11 +1725,7 @@ function App() {
                     {Array.isArray(item.variants) && item.variants.length > 1 && (
                       <div className="panel-description">From: {item.variants.join(", ")}</div>
                     )}
-                    <div className="panel-description">
-                      Est: {(item.currency || "EUR")} {toMoney(item.estimated_unit_cost ?? 0)} each
-                    </div>
                   </div>
-                  <strong>x{item.count} | {(item.currency || "EUR")} {toMoney(item.estimated_subtotal ?? 0)}</strong>
                 </div>
               ))}
             </div>
