@@ -23,3 +23,5 @@ reports/
 # Virtual envs / env files
 venv/
 .env
+.env.production.example
+startup.sh
