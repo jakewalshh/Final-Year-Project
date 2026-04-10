@@ -23,3 +23,5 @@ reports/
 # Virtual envs / env files
 venv/
 .env
+
+startup.sh
