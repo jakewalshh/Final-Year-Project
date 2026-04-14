@@ -202,6 +202,23 @@ class PlannerApiTests(APITestCase):
         self.assertEqual(float(gen_resp.data["query"]["max_total_budget"]), 10.0)
         self.assertEqual(float(gen_resp.data["query"]["budget_cap"]), 10.0)
 
+    def test_generate_plan_prompt_mode_uses_rules_parser_when_openai_disabled(self):
+        self._register_and_login()
+        gen_resp = self.client.post(
+            reverse("meal-plan-generate"),
+            {
+                "input_mode": "prompt",
+                "prompt": "Create 1 vegetarian meal with tofu under 30 minutes",
+                "max_total_budget": 12,
+                "optimize_mode": "balanced",
+            },
+            format="json",
+        )
+        self.assertEqual(gen_resp.status_code, 200)
+        self.assertFalse(gen_resp.data["no_results"])
+        self.assertEqual(gen_resp.data["query"]["parser_source"], "rules")
+        self.assertEqual(float(gen_resp.data["query"]["budget_cap"]), 12.0)
+
     def test_generate_plan_budget_cap_infeasible_returns_warning(self):
         self._register_and_login()
         gen_resp = self.client.post(
@@ -445,6 +462,85 @@ class PlannerApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(rate_resp.status_code, 404)
+
+    def test_swap_meal_blocks_other_user_plan(self):
+        owner = User.objects.create_user(
+            username="swapowner@example.com",
+            email="swapowner@example.com",
+            password="StrongPass123!",
+        )
+        replacement = Recipe.objects.create(
+            name="Owner Replacement Meal",
+            ingredients="tofu, broccoli",
+            instructions="Cook",
+            minutes=20,
+            external_id=32911,
+        )
+        owner_plan = MealPlan.objects.create(
+            user=owner,
+            title="Owner Swap Plan",
+            source_prompt="owner",
+            parsed_query={"num_meals": 1},
+        )
+        MealPlanItem.objects.create(meal_plan=owner_plan, position=1, recipe=self.recipe)
+
+        self._register_and_login()
+        swap_resp = self.client.post(
+            reverse("meal-plan-swap", args=[owner_plan.id]),
+            {"position": 1},
+            format="json",
+        )
+        self.assertEqual(swap_resp.status_code, 404)
+        self.assertTrue(Recipe.objects.filter(id=replacement.id).exists())
+
+    def test_delete_plan_blocks_other_user_plan(self):
+        owner = User.objects.create_user(
+            username="deleteowner@example.com",
+            email="deleteowner@example.com",
+            password="StrongPass123!",
+        )
+        owner_plan = MealPlan.objects.create(
+            user=owner,
+            title="Owner Delete Plan",
+            source_prompt="owner",
+            parsed_query={"num_meals": 1},
+        )
+        MealPlanItem.objects.create(meal_plan=owner_plan, position=1, recipe=self.recipe)
+
+        self._register_and_login()
+        delete_resp = self.client.delete(reverse("meal-plan-detail", args=[owner_plan.id]))
+        self.assertEqual(delete_resp.status_code, 404)
+        self.assertTrue(MealPlan.objects.filter(id=owner_plan.id).exists())
+
+    def test_shopping_list_blocks_other_user_plan(self):
+        owner = User.objects.create_user(
+            username="shopowner@example.com",
+            email="shopowner@example.com",
+            password="StrongPass123!",
+        )
+        owner_plan = MealPlan.objects.create(
+            user=owner,
+            title="Owner Shopping Plan",
+            source_prompt="owner",
+            parsed_query={"num_meals": 1},
+        )
+        MealPlanItem.objects.create(meal_plan=owner_plan, position=1, recipe=self.recipe)
+
+        ShoppingList.objects.create(
+            meal_plan=owner_plan,
+            items={
+                "items": [{"ingredient": "tofu", "count": 1, "variants": ["tofu"]}],
+                "cost_summary": {"estimated_total": 1.8, "currency": "EUR", "notes": "test"},
+                "estimate_source": "rules",
+                "is_rough_estimate": True,
+            },
+        )
+
+        self._register_and_login()
+        get_resp = self.client.get(reverse("shopping-list", args=[owner_plan.id]))
+        post_resp = self.client.post(reverse("shopping-list", args=[owner_plan.id]), {}, format="json")
+        self.assertEqual(get_resp.status_code, 404)
+        self.assertEqual(post_resp.status_code, 404)
 
     def test_optimizer_applies_soft_rating_weight(self):
         low = Recipe.objects.create(
