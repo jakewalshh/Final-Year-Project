@@ -8,6 +8,7 @@ User = get_user_model()
 
 
 class RegisterSerializer(serializers.Serializer):
+    # Validates registration input and password rules.
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
@@ -27,12 +28,14 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class UserSummarySerializer(serializers.ModelSerializer):
+    # Returns basic authenticated user identity and role flags.
     class Meta:
         model = User
         fields = ("id", "email", "is_staff", "is_superuser")
 
 
 class UserPreferenceSerializer(serializers.ModelSerializer):
+    # Serializes user preference defaults for planner personalization.
     class Meta:
         model = UserPreference
         fields = (
@@ -47,6 +50,7 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
 
 
 class MealPlanItemSerializer(serializers.ModelSerializer):
+    # Serializes one item slot within a meal plan.
     recipe_id = serializers.IntegerField(source="recipe.id", read_only=True)
     recipe_name = serializers.CharField(source="recipe.name", read_only=True)
 
@@ -56,6 +60,7 @@ class MealPlanItemSerializer(serializers.ModelSerializer):
 
 
 class MealPlanSerializer(serializers.ModelSerializer):
+    # Serializes full meal plan details and completion metrics.
     items = MealPlanItemSerializer(many=True, read_only=True)
     rated_count = serializers.SerializerMethodField()
     total_count = serializers.SerializerMethodField()
@@ -84,6 +89,7 @@ class MealPlanSerializer(serializers.ModelSerializer):
 
 
 class MealPlanListSerializer(serializers.ModelSerializer):
+    # Serializes compact meal plan list cards.
     item_count = serializers.IntegerField(source="items.count", read_only=True)
     rated_count = serializers.SerializerMethodField()
     total_count = serializers.SerializerMethodField()
@@ -100,17 +106,20 @@ class MealPlanListSerializer(serializers.ModelSerializer):
 
 
 class SwapMealSerializer(serializers.Serializer):
+    # Validates swap request payload.
     position = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(required=False, allow_blank=True)
 
 
 class RateMealSerializer(serializers.Serializer):
+    # Validates per-item rating payload.
     position = serializers.IntegerField(min_value=1)
     rating = serializers.IntegerField(min_value=1, max_value=5)
     feedback_note = serializers.CharField(required=False, allow_blank=True)
 
 
 class ShoppingListSerializer(serializers.ModelSerializer):
+    # Serializes stored shopping list payloads.
     class Meta:
         model = ShoppingList
         fields = ("meal_plan", "items", "created_at")

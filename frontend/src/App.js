@@ -23,12 +23,14 @@ const QUICK_PROMPTS = [
 
 const randomQuickPrompt = () => QUICK_PROMPTS[Math.floor(Math.random() * QUICK_PROMPTS.length)];
 
+// Convert list values to comma-separated text for inputs.
 const toCsv = (value) =>
   (value || [])
     .map((x) => String(x || "").trim())
     .filter(Boolean)
     .join(", ");
 
+// Convert comma-separated text to normalized list values.
 const fromCsv = (value) =>
   String(value || "")
     .split(",")
@@ -59,6 +61,7 @@ const ACRONYM_MAP = {
   ai: "AI",
 };
 
+// Normalize spacing and punctuation for UI text display.
 const normalizeText = (value) =>
   String(value || "")
     .replace(/\s+/g, " ")
@@ -70,6 +73,7 @@ const normalizeText = (value) =>
     .replace(/\s+\)/g, ")")
     .trim();
 
+// Capitalize the first readable letter in a sentence.
 const capitalizeFirstLetter = (value) => {
   const text = normalizeText(value);
   if (!text) return "";
@@ -78,6 +82,7 @@ const capitalizeFirstLetter = (value) => {
   return `${text.slice(0, idx)}${text[idx].toUpperCase()}${text.slice(idx + 1)}`;
 };
 
+// Format recipe titles to readable title case.
 const formatRecipeTitle = (value) => {
   const text = normalizeText(value);
   if (!text) return "";
@@ -99,6 +104,7 @@ const formatRecipeTitle = (value) => {
     .join(" ");
 };
 
+// Format ingredients into a readable comma-separated line.
 const formatIngredientList = (ingredients) => {
   if (Array.isArray(ingredients)) {
     return ingredients
@@ -113,18 +119,21 @@ const formatIngredientList = (ingredients) => {
     .join(", ");
 };
 
+// Format each instruction step for cleaner recipe cards.
 const formatInstructionStep = (step) => {
   const text = capitalizeFirstLetter(step);
   if (!text) return "";
   return /[.!?]$/.test(text) ? text : `${text}.`;
 };
 
+// Format numeric values into currency-ready strings.
 const toMoney = (value) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return "0.00";
   return n.toFixed(2);
 };
 
+// Build copy-ready shopping list text for external notes apps.
 const buildShoppingListExportText = (shoppingList, planLabel = "") => {
   const items = Array.isArray(shoppingList?.items) ? shoppingList.items : [];
   const currency = shoppingList?.cost_summary?.currency || "EUR";
@@ -223,11 +232,13 @@ function App() {
   const isAdmin = Boolean(currentUser?.is_staff);
 
   const parserWarnings = useMemo(() => {
+    // Keep parser warning rendering safe and predictable.
     if (!parsedQuery) return [];
     return Array.isArray(parsedQuery.parser_warnings) ? parsedQuery.parser_warnings : [];
   }, [parsedQuery]);
 
   const persistAuth = (payload) => {
+    // Save login tokens and user profile in local state and storage.
     const access = payload?.access || "";
     const refresh = payload?.refresh || "";
     const user = payload?.user ||
@@ -250,6 +261,7 @@ function App() {
   };
 
   const clearAuth = () => {
+    // Clear session state and reset app-level UI data.
     setAccessToken("");
     setRefreshToken("");
     setCurrentUser(null);
@@ -287,6 +299,7 @@ function App() {
   };
 
   const apiFetch = async (path, options = {}, canRetry = true, tokenOverride = null) => {
+    // Central API client with auto refresh for expired access tokens.
     const headers = {
       "Content-Type": "application/json",
       ...(options.headers || {}),
@@ -337,12 +350,14 @@ function App() {
   };
 
   const loadProfile = async () => {
+    // Load authenticated user details for role-aware UI.
     const me = await apiFetch("/auth/me/");
     setCurrentUser(me);
     localStorage.setItem("panion_user", JSON.stringify(me));
   };
 
   const loadPreferences = async () => {
+    // Load and map stored preference defaults into form state.
     const data = await apiFetch("/preferences/");
     setPreferences(data);
     setPrefFields({
@@ -357,16 +372,19 @@ function App() {
   };
 
   const loadSavedPlans = async () => {
+    // Load saved meal plans for the signed-in user.
     const data = await apiFetch("/meal-plans/");
     setSavedPlans(Array.isArray(data) ? data : []);
   };
 
   const loadTags = async () => {
+    // Load available tags for include and exclude selectors.
     const data = await apiFetch("/tags/?limit=220");
     setAvailableTags(Array.isArray(data?.tags) ? data.tags : []);
   };
 
   const loadPlanDetail = async (planId) => {
+    // Load one saved plan and keep selected id in sync.
     if (!planId) return;
     try {
       const data = await apiFetch(`/meal-plans/${planId}/`);
@@ -384,6 +402,7 @@ function App() {
   };
 
   const loadShoppingList = async (planId) => {
+    // Load an existing shopping list for the selected meal plan.
     if (!planId) return;
     try {
       const data = await apiFetch(`/meal-plans/${planId}/shopping-list/`);
@@ -434,6 +453,7 @@ function App() {
   }, [savedPlans, selectedPlanId]);
 
   const handleAuthSubmit = async (event) => {
+    // Handle login and registration submit flows.
     event.preventDefault();
     setError("");
     setNotice("");
@@ -475,6 +495,7 @@ function App() {
   };
 
   const addTagConstraint = (type) => {
+    // Add include or exclude tag while preventing direct conflicts.
     if (type === "include") {
       const tag = includeTagDraft.trim().toLowerCase();
       if (!tag) return;
@@ -492,6 +513,7 @@ function App() {
   };
 
   const removeTagConstraint = (type, tag) => {
+    // Remove a tag from include or exclude state.
     if (type === "include") {
       setIncludeTags((prev) => prev.filter((x) => x !== tag));
       return;
@@ -500,6 +522,7 @@ function App() {
   };
 
   const buildGeneratePayload = () => {
+    // Build prompt or manual request payload for plan generation.
     if (inputMode === "manual") {
       return {
         input_mode: "manual",
@@ -537,6 +560,7 @@ function App() {
   };
 
   const handleGeneratePlan = async (event) => {
+    // Generate a plan, then refresh saved and selected plan state.
     event.preventDefault();
     setLoading(true);
     setError("");
@@ -569,6 +593,7 @@ function App() {
   };
 
   const handleSavePreferences = async (event) => {
+    // Persist preference settings for future plan generation.
     event.preventDefault();
     setLoading(true);
     setError("");
@@ -600,6 +625,7 @@ function App() {
   };
 
   const handleDeletePlan = async (planId) => {
+    // Delete a saved plan and recover gracefully on ownership errors.
     setLoading(true);
     setError("");
     setNotice("");
@@ -624,6 +650,7 @@ function App() {
   };
 
   const handleGenerateShoppingList = async (planId) => {
+    // Generate shopping list from the selected plan id.
     if (!planId) return;
     setLoading(true);
     setError("");
@@ -643,6 +670,7 @@ function App() {
   };
 
   const handleSwapMeal = async (position) => {
+    // Swap a meal inside the saved-plan detail view.
     if (!selectedPlan?.id) return;
     setLoading(true);
     setError("");
@@ -663,6 +691,7 @@ function App() {
   };
 
   const handleSwapGeneratedMeal = async (position) => {
+    // Swap a meal directly in the newly generated plan view.
     if (!mealPlan?.id) return;
     setLoading(true);
     setError("");
@@ -691,6 +720,7 @@ function App() {
   };
 
   const handleRateMeal = async (position, rating) => {
+    // Submit rating for one meal and refresh completion state.
     if (!selectedPlan?.id) return;
     setLoading(true);
     setError("");
@@ -712,6 +742,7 @@ function App() {
   };
 
   const handleCopyShoppingList = async () => {
+    // Copy shopping list text with fallback for older browsers.
     if (!shoppingList) return;
     const selectedPlanLabel =
       savedPlans.find((plan) => String(plan.id) === String(selectedPlanId))?.title || `Plan ${selectedPlanId}`;
@@ -741,22 +772,26 @@ function App() {
   };
 
   const handlePromptFocus = () => {
+    // Clear prefilled suggestion when user starts typing.
     if (!promptPrefilled) return;
     setPrompt("");
     setPromptPrefilled(false);
   };
 
   const handlePromptChange = (value) => {
+    // Update prompt text and disable prefilled state.
     setPrompt(value);
     setPromptPrefilled(false);
   };
 
   const handleNewSuggestion = () => {
+    // Replace prompt text with a new random suggestion.
     setPrompt(randomQuickPrompt());
     setPromptPrefilled(true);
   };
 
   const formatNutrition = (recipe) => {
+    // Build readable nutrition labels only when data exists.
     if (!recipe?.nutrition) return null;
     const n = recipe.nutrition;
     return (

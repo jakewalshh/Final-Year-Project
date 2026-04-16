@@ -15,6 +15,7 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
 def _to_int(value, default):
+    # Convert request values to int safely.
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -22,6 +23,7 @@ def _to_int(value, default):
 
 
 def _clamp(value, minimum, maximum):
+    # Keep numeric query values inside an allowed range.
     if value < minimum:
         return minimum
     if value > maximum:
@@ -30,6 +32,7 @@ def _clamp(value, minimum, maximum):
 
 
 def _base_queryset():
+    # Load recipe data with related fields to reduce query overhead.
     return Recipe.objects.prefetch_related(
         Prefetch(
             "recipe_ingredients",
@@ -50,6 +53,7 @@ def _base_queryset():
 
 
 def _recipe_ingredients(recipe):
+    # Read ingredient names from prefetched or direct relations.
     if hasattr(recipe, "prefetched_recipe_ingredients"):
         ingredient_rows = recipe.prefetched_recipe_ingredients
         return [row.ingredient.name for row in ingredient_rows]
@@ -59,6 +63,7 @@ def _recipe_ingredients(recipe):
 
 
 def _recipe_steps(recipe):
+    # Read instruction steps from prefetched or direct relations.
     if hasattr(recipe, "prefetched_steps"):
         return [row.instruction for row in recipe.prefetched_steps]
 
@@ -66,6 +71,7 @@ def _recipe_steps(recipe):
 
 
 def _recipe_tags(recipe):
+    # Read tag names from prefetched or direct relations.
     if hasattr(recipe, "prefetched_recipe_tags"):
         return [row.tag.name for row in recipe.prefetched_recipe_tags]
 
@@ -74,14 +80,17 @@ def _recipe_tags(recipe):
 
 
 def _fallback_ingredients(recipe):
+    # Fallback to legacy comma-separated ingredients field.
     return [item.strip() for item in recipe.ingredients.split(",") if item.strip()]
 
 
 def _fallback_steps(recipe):
+    # Fallback to legacy newline-separated instructions field.
     return [item.strip() for item in recipe.instructions.split("\n") if item.strip()]
 
 
 def _serialize_recipe(recipe, include_steps=True):
+    # Build a consistent API payload for recipe cards.
     ingredients = _recipe_ingredients(recipe)
     if not ingredients:
         ingredients = _fallback_ingredients(recipe)
@@ -152,7 +161,7 @@ def plan_meals(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
 
-    # 1. Parse JSON body
+    # Parse request JSON body from the prompt endpoint.
     try:
         body = json.loads(request.body.decode("utf-8"))
     except json.JSONDecodeError:
@@ -192,6 +201,7 @@ def plan_meals(request):
 
 
 def search_recipes(request):
+    # Support direct recipe search filters for legacy and tooling flows.
     if request.method != "GET":
         return JsonResponse({"error": "Only GET allowed"}, status=405)
 
@@ -236,6 +246,7 @@ def search_recipes(request):
 
 
 def recipe_detail(request, recipe_id):
+    # Return one recipe card with all details for detail view usage.
     if request.method != "GET":
         return JsonResponse({"error": "Only GET allowed"}, status=405)
 

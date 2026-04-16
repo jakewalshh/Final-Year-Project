@@ -68,6 +68,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # Validate CLI options and run the CSV import pipeline.
         csv_path = Path(options["csv_path"]).expanduser().resolve()
         batch_size = options["batch_size"]
         limit = options["limit"]
@@ -98,6 +99,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"Skipped existing: {skipped}"))
 
     def _truncate_tables(self):
+        # Clear normalized recipe tables before a full reimport.
         self.stdout.write(self.style.WARNING("Truncating recipe tables..."))
         with transaction.atomic():
             RecipeIngredient.objects.all().delete()
@@ -116,6 +118,7 @@ class Command(BaseCommand):
         limit: int | None,
         refresh_existing: bool,
     ) -> tuple[int, int]:
+        # Stream CSV rows and flush in batches for stable memory use.
         ingredient_cache = dict(Ingredient.objects.values_list("name", "id"))
         tag_cache = dict(Tag.objects.values_list("name", "id"))
 
@@ -182,6 +185,7 @@ class Command(BaseCommand):
         tag_cache: dict[str, int],
         refresh_existing: bool,
     ):
+        # Persist one chunk of recipes and related normalized rows.
         external_ids = [item.recipe.external_id for item in chunk if item.recipe.external_id is not None]
 
         with transaction.atomic():
@@ -265,6 +269,7 @@ class Command(BaseCommand):
             RecipeTag.objects.bulk_create(recipe_tags, ignore_conflicts=True)
 
     def _bulk_upsert_recipes(self, chunk: list[ParsedRecipeRow]):
+        # Upsert base recipe rows when refresh mode is enabled.
         for item in chunk:
             recipe = item.recipe
             if recipe.external_id is None:
@@ -298,6 +303,7 @@ class Command(BaseCommand):
         cache: dict[str, int],
         model: type[Ingredient] | type[Tag],
     ):
+        # Ensure lookup cache includes all ingredient and tag ids needed for the chunk.
         missing = [name for name in names if name and name not in cache]
         if not missing:
             return
@@ -321,6 +327,7 @@ class Command(BaseCommand):
         return names
 
     def _parse_row(self, row: dict[str, str]) -> ParsedRecipeRow | None:
+        # Parse and normalize one CSV row into recipe and relation payloads.
         try:
             external_id = int(row["id"])
             minutes = self._to_int(row.get("minutes"))
@@ -389,6 +396,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _parse_list(value: str | None) -> list:
+        # Parse list-like strings from CSV columns safely.
         if not value:
             return []
         parsed = ast.literal_eval(value)
@@ -398,6 +406,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _parse_nutrition(nutrition: list) -> tuple[float | None, ...]:
+        # Parse fixed nutrition columns into float tuple values.
         values = []
         for idx in range(7):
             raw = nutrition[idx] if idx < len(nutrition) else None
@@ -427,12 +436,14 @@ class Command(BaseCommand):
 
     @staticmethod
     def _normalize_name(value) -> str:
+        # Normalize names for deterministic ingredient and tag matching.
         if value is None:
             return ""
         return " ".join(str(value).strip().lower().split())
 
     @staticmethod
     def _clean_text(value) -> str:
+        # Clean free-text step fields from CSV values.
         if value is None:
             return ""
         return str(value).strip()

@@ -92,10 +92,12 @@ TOKEN_ALIASES = {
 
 
 def _clamp(value: int, minimum: int, maximum: int) -> int:
+    # Keep numeric values inside a safe range.
     return max(minimum, min(maximum, value))
 
 
 def _to_int(value: Any, default: int | None = None) -> int | None:
+    # Convert input to int and fall back on invalid values.
     try:
         if value is None:
             return default
@@ -105,6 +107,7 @@ def _to_int(value: Any, default: int | None = None) -> int | None:
 
 
 def _to_float(value: Any, default: float | None = None) -> float | None:
+    # Convert input to float and fall back on invalid values.
     try:
         if value is None:
             return default
@@ -114,6 +117,7 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
 
 
 def _prompt_tokens(prompt: str) -> list[str]:
+    # Tokenize prompt text and normalize common typos.
     raw_tokens = [token.lower() for token in re.findall(r"[a-zA-Z0-9']+", prompt)]
     normalized = []
     for token in raw_tokens:
@@ -126,6 +130,7 @@ def _prompt_tokens(prompt: str) -> list[str]:
 
 
 def _token_to_int(token: str | None) -> int | None:
+    # Convert digit and number-word tokens to integers.
     if token is None:
         return None
     if token.isdigit():
@@ -134,6 +139,7 @@ def _token_to_int(token: str | None) -> int | None:
 
 
 def _extract_num_meals(prompt: str, default: int = 3) -> int:
+    # Infer requested meal count from prompt text.
     tokens = _prompt_tokens(prompt)
     for index in range(len(tokens) - 1):
         number = _token_to_int(tokens[index])
@@ -149,6 +155,7 @@ def _extract_num_meals(prompt: str, default: int = 3) -> int:
 
 
 def _normalize_item_list(value: Any) -> list[str]:
+    # Normalize list-like inputs to unique lowercase items.
     if value is None:
         return []
     if isinstance(value, str):
@@ -171,6 +178,7 @@ def _normalize_item_list(value: Any) -> list[str]:
 
 
 def _terms_conflict(a: str, b: str) -> bool:
+    # Detect overlap between include and exclude terms.
     left = a.strip().lower()
     right = b.strip().lower()
     if not left or not right:
@@ -179,6 +187,7 @@ def _terms_conflict(a: str, b: str) -> bool:
 
 
 def _extract_numeric_constraint(prompt: str, key_terms: tuple[str, ...]) -> float | None:
+    # Extract numeric limits like calories or carbs from prompt text.
     lower_prompt = prompt.lower()
     for term in key_terms:
         pattern = rf"(?:under|less than|below|max(?:imum)?|<=?)\s*(\d+(?:\.\d+)?)\s*{term}"
@@ -189,6 +198,7 @@ def _extract_numeric_constraint(prompt: str, key_terms: tuple[str, ...]) -> floa
 
 
 def _collect_ngrams(tokens: list[str], max_n: int = 3) -> list[str]:
+    # Build short phrase candidates for ingredient and tag matching.
     grams: list[str] = []
     for n in range(max_n, 0, -1):
         for i in range(len(tokens) - n + 1):
@@ -199,6 +209,7 @@ def _collect_ngrams(tokens: list[str], max_n: int = 3) -> list[str]:
 
 
 def _lookup_known_terms(candidates: list[str], *, ingredient_lookup: set[str], tag_lookup: set[str]) -> tuple[list[str], list[str]]:
+    # Map candidate phrases to known ingredients and tags.
     includes_ingredients = []
     includes_tags = []
 
@@ -224,6 +235,7 @@ def _lookup_known_terms(candidates: list[str], *, ingredient_lookup: set[str], t
 
 
 def _infer_exclusions(tokens: list[str], *, ingredient_lookup: set[str], tag_lookup: set[str]) -> tuple[list[str], list[str]]:
+    # Infer exclusion ingredients and tags from negation and allergy phrases.
     excluded_ingredients: list[str] = []
     excluded_tags: list[str] = []
 
@@ -283,6 +295,7 @@ def _infer_exclusions(tokens: list[str], *, ingredient_lookup: set[str], tag_loo
 
 
 def _default_query() -> dict[str, Any]:
+    # Provide a stable default query contract for all parser paths.
     return {
         "num_meals": 3,
         "ingredient_keywords": [],
@@ -301,6 +314,7 @@ def _default_query() -> dict[str, Any]:
 
 
 def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
+    # Normalize and validate parsed query fields before execution.
     parsed = _default_query()
     warnings = []
 
@@ -365,10 +379,12 @@ def _sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
 
 def sanitize_query(raw_query: dict[str, Any]) -> dict[str, Any]:
     """Public wrapper so other apps can normalize/validate query payloads."""
+    # Expose shared sanitization for planner and API layers.
     return _sanitize_query(raw_query)
 
 
 def _infer_query_from_prompt(prompt: str, *, ingredient_lookup: set[str], tag_lookup: set[str]) -> dict[str, Any]:
+    # Build a structured query from plain prompt text using rules.
     lower_prompt = prompt.lower()
     tokens = _prompt_tokens(prompt)
     ngrams = _collect_ngrams(tokens, max_n=3)
@@ -446,6 +462,7 @@ def parse_prompt_to_query(
     openai_client,
     openai_model: str = "gpt-4o-mini",
 ) -> dict[str, Any]:
+    # Parse prompt with OpenAI first and fallback rules when needed.
     ingredient_lookup = set(Ingredient.objects.values_list("name", flat=True))
     tag_lookup = set(Tag.objects.values_list("name", flat=True))
 
@@ -532,6 +549,7 @@ def parse_prompt_to_query(
 
 
 def build_plan_queryset(base_queryset: QuerySet[Recipe], parsed_query: dict[str, Any]) -> QuerySet[Recipe]:
+    # Apply parsed constraints to produce the recipe queryset.
     qs = base_queryset
 
     search_text = parsed_query.get("search_text")

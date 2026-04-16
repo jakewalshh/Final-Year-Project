@@ -37,6 +37,7 @@ User = get_user_model()
 
 
 def _percentile(sorted_values: list[float], q: float) -> float:
+    # Compute percentile values for pricing report summaries.
     if not sorted_values:
         return 0.0
     q = max(0.0, min(1.0, float(q)))
@@ -50,6 +51,7 @@ def _percentile(sorted_values: list[float], q: float) -> float:
 
 
 def _normalize_string_list(value) -> list[str]:
+    # Normalize list-like input into unique lowercase tokens.
     if value is None:
         return []
     if isinstance(value, str):
@@ -69,6 +71,7 @@ def _normalize_string_list(value) -> list[str]:
 
 
 def _to_int(value, default: int) -> int:
+    # Convert values to int with a stable fallback.
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -76,6 +79,7 @@ def _to_int(value, default: int) -> int:
 
 
 def _to_optional_int(value) -> int | None:
+    # Convert optional values to int or None.
     try:
         if value is None or value == "":
             return None
@@ -85,6 +89,7 @@ def _to_optional_int(value) -> int | None:
 
 
 def _to_optional_float(value) -> float | None:
+    # Convert optional values to float or None.
     try:
         if value is None or value == "":
             return None
@@ -94,6 +99,7 @@ def _to_optional_float(value) -> float | None:
 
 
 def _base_queryset():
+    # Build the base recipe queryset with all related data prefetched.
     return Recipe.objects.prefetch_related(
         Prefetch(
             "recipe_ingredients",
@@ -114,6 +120,7 @@ def _base_queryset():
 
 
 def _merge_preference_constraints(parsed_query: dict, preference: UserPreference | None) -> dict:
+    # Merge saved user preferences into the current parsed query.
     merged = dict(parsed_query)
     warnings = list(merged.get("parser_warnings", []))
 
@@ -160,6 +167,7 @@ def _merge_preference_constraints(parsed_query: dict, preference: UserPreference
 
 
 def _apply_tag_overrides(parsed_query: dict, include_tags: list[str], exclude_tags: list[str]) -> dict:
+    # Apply request-level include and exclude tag overrides safely.
     updated = dict(parsed_query)
     warnings = list(updated.get("parser_warnings", []))
 
@@ -364,10 +372,12 @@ OPTIMIZATION_PROFILES = {
 
 
 def _clamp_float(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    # Keep scores inside a bounded float range.
     return max(minimum, min(maximum, value))
 
 
 def _normalize_optimize_mode(value: str | None) -> str:
+    # Normalize optimization mode to supported profile names.
     mode = str(value or "balanced").strip().lower()
     if mode in OPTIMIZATION_PROFILES:
         return mode
@@ -375,12 +385,14 @@ def _normalize_optimize_mode(value: str | None) -> str:
 
 
 def _recipe_ingredient_names(recipe: Recipe) -> list[str]:
+    # Get ingredient names from normalized relations or legacy text fields.
     if hasattr(recipe, "prefetched_recipe_ingredients") and recipe.prefetched_recipe_ingredients:
         return [ri.ingredient.name for ri in recipe.prefetched_recipe_ingredients]
     return [x.strip() for x in recipe.ingredients.split(",") if x.strip()]
 
 
 def _canonicalize_terms(raw_name: str) -> set[str]:
+    # Canonicalize ingredient text into reusable matching terms.
     cleaned = str(raw_name or "").strip().lower()
     if not cleaned:
         return set()
@@ -398,6 +410,7 @@ def _canonicalize_terms(raw_name: str) -> set[str]:
 
 
 def _protein_family(term: str) -> str | None:
+    # Map ingredient terms into broad protein families.
     token = str(term or "").strip().lower()
     if not token:
         return None
@@ -413,6 +426,7 @@ def _protein_family(term: str) -> str | None:
 
 
 def _anchor_targets(parsed_query: dict) -> tuple[set[str], set[str]]:
+    # Build anchor terms used to bias optimizer selection.
     anchor_terms: set[str] = set()
     anchor_families: set[str] = set()
     for keyword in _normalize_string_list(parsed_query.get("ingredient_keywords")):
@@ -434,6 +448,7 @@ def _meal_likelihood(
     minutes: int | None,
     protein_families: set[str],
 ) -> float:
+    # Score whether a candidate looks like a complete meal.
     score = 0.5
     lower_name = str(name or "").strip().lower()
     tag_tokens = [str(tag or "").strip().lower() for tag in tags]
@@ -474,6 +489,7 @@ def _meal_likelihood(
 
 
 def _is_hard_non_meal(*, name: str, tags: list[str]) -> bool:
+    # Hard reject obvious non-meal candidates like sauces and desserts.
     lower_name = str(name or "").strip().lower()
     tag_tokens = [str(tag or "").strip().lower() for tag in tags]
     if any(hint in lower_name for hint in HARD_NON_MEAL_NAME_HINTS):
@@ -484,6 +500,7 @@ def _is_hard_non_meal(*, name: str, tags: list[str]) -> bool:
 
 
 def _candidate_profile(recipe: Recipe) -> dict:
+    # Build normalized metadata used by optimizer scoring.
     ingredient_terms: set[str] = set()
     for raw_name in _recipe_ingredient_names(recipe):
         ingredient_terms.update(_canonicalize_terms(raw_name))
@@ -518,6 +535,7 @@ def _base_candidate_score(
     anchor_families: set[str],
     component_weights: dict[str, float],
 ) -> dict[str, float]:
+    # Compute core component scores before overlap and diversity logic.
     ingredient_terms = profile["ingredients"]
     protein_families = profile["protein_families"]
     recipe = profile["recipe"]
@@ -569,6 +587,7 @@ def _base_candidate_score(
 
 
 def _overlap_score(candidate_terms: set[str], basket_terms: set[str]) -> float:
+    # Score how well a recipe reuses already selected ingredients.
     if not basket_terms or not candidate_terms:
         return 0.0
     intersection = len(candidate_terms & basket_terms)
@@ -581,6 +600,7 @@ def _overlap_score(candidate_terms: set[str], basket_terms: set[str]) -> float:
 
 
 def _diversity_penalty(candidate_terms: set[str], selected_profiles: list[dict], *, penalty_scale: float) -> float:
+    # Penalize near-duplicate recipes to improve variety.
     penalty = 0.0
     for selected in selected_profiles:
         existing_terms = selected["ingredients"]
@@ -602,6 +622,7 @@ RATING_ADJUSTMENT_MAP = {
 
 
 def _rating_adjustment_for_recipe(recipe_id: int, recipe_rating_map: dict[int, float] | None) -> float:
+    # Apply a soft user-rating adjustment to candidate scores.
     if not recipe_rating_map:
         return 0.0
     avg_rating = recipe_rating_map.get(recipe_id)
@@ -612,6 +633,7 @@ def _rating_adjustment_for_recipe(recipe_id: int, recipe_rating_map: dict[int, f
 
 
 def _user_recipe_rating_map(user) -> dict[int, float]:
+    # Build per-user recipe rating averages for optimization.
     ratings_by_recipe: dict[int, list[int]] = defaultdict(list)
     rated_rows = MealPlanItem.objects.filter(
         meal_plan__user=user,
@@ -628,6 +650,7 @@ def _user_recipe_rating_map(user) -> dict[int, float]:
 
 
 def _budget_cap_value(parsed_query: dict) -> float | None:
+    # Normalize and validate budget cap values.
     cap = _to_optional_float(parsed_query.get("max_total_budget"))
     if cap is None or cap <= 0:
         return None
@@ -640,6 +663,7 @@ def _estimate_recipe_cost_from_terms(
     exact_lookup: dict[str, float] | None = None,
     canonical_lookup: dict[str, float] | None = None,
 ) -> float:
+    # Estimate recipe cost from canonical ingredient terms.
     if not ingredient_terms:
         return 0.75
     total = 0.0
@@ -655,6 +679,7 @@ def _estimate_recipe_cost(
     exact_lookup: dict[str, float] | None = None,
     canonical_lookup: dict[str, float] | None = None,
 ) -> float:
+    # Estimate recipe cost from ingredient names with fallback.
     ingredient_names = _recipe_ingredient_names(recipe)
     if ingredient_names:
         total = 0.0
@@ -679,6 +704,7 @@ def _select_optimized_recipes(
     random_seed: int | None = None,
     recipe_rating_map: dict[int, float] | None = None,
 ) -> tuple[list[Recipe], dict]:
+    # Select final recipes using mode weights, variety, ratings, and budget checks.
     target_count = _to_int(parsed_query.get("num_meals"), 3)
     target_count = max(1, target_count)
     optimize_mode = _normalize_optimize_mode(optimize_mode)
@@ -876,6 +902,7 @@ def _select_optimized_recipes(
 
 
 def _filter_meal_candidates(candidates: list[Recipe], required_count: int) -> tuple[list[Recipe], dict]:
+    # Filter out weak or non-meal candidates before final selection.
     if not candidates:
         return [], {"raw_candidate_count": 0, "strict_candidate_count": 0, "relaxed_candidate_count": 0}
 
@@ -905,6 +932,7 @@ def _query_with_fallbacks(
     selection_seed: int | None = None,
     recipe_rating_map: dict[int, float] | None = None,
 ) -> tuple[list, dict]:
+    # Execute staged fallback queries when strict constraints return too few meals.
     attempts = []
     base = dict(parsed_query)
     required_count = max(1, _to_int(base.get("num_meals"), 3))
@@ -1020,6 +1048,7 @@ INGREDIENT_STOPWORDS = {
 
 
 def _canonical_ingredient_name(raw_name: str) -> str:
+    # Canonicalize ingredient labels for consolidation and costing.
     cleaned = str(raw_name or "").strip().lower()
     if not cleaned:
         return ""
@@ -1047,6 +1076,7 @@ def _canonical_ingredient_name(raw_name: str) -> str:
 
 
 def _collect_plan_ingredient_names(meal_plan: MealPlan) -> list[str]:
+    # Collect raw ingredient names across all recipes in a meal plan.
     names: list[str] = []
     items = meal_plan.items.select_related("recipe").prefetch_related(
         Prefetch(
@@ -1069,6 +1099,7 @@ DEFAULT_UNKNOWN_INGREDIENT_COST_EUR = 0.75
 
 
 def _ingredient_cost_indexes() -> tuple[dict[str, float], dict[str, float]]:
+    # Build exact and canonical cost indexes from ingredient records.
     exact: dict[str, float] = {}
     canonical_buckets: dict[str, list[float]] = defaultdict(list)
 
@@ -1097,6 +1128,7 @@ def _estimate_item_cost_eur(
     exact_lookup: dict[str, float] | None = None,
     canonical_lookup: dict[str, float] | None = None,
 ) -> float:
+    # Estimate one ingredient cost with exact and canonical fallbacks.
     name_key = str(ingredient or "").strip().lower()
     if not name_key:
         return DEFAULT_UNKNOWN_INGREDIENT_COST_EUR
@@ -1114,6 +1146,7 @@ def _estimate_item_cost_eur(
 
 
 def _aggregate_shopping_items(rows: list[dict]) -> list[dict]:
+    # Merge duplicate shopping rows into canonical ingredient buckets.
     ingredient_buckets: dict[str, dict] = {}
     for row in rows:
         source = str(row.get("source") or "").strip().lower()
@@ -1149,6 +1182,7 @@ def _aggregate_shopping_items(rows: list[dict]) -> list[dict]:
 
 
 def _enrich_items_with_costs(items: list[dict], currency: str = "EUR") -> tuple[list[dict], dict]:
+    # Attach estimated cost fields and total summary to shopping items.
     normalized_items = []
     estimated_total = 0.0
     exact_lookup, canonical_lookup = _ingredient_cost_indexes()
@@ -1208,11 +1242,13 @@ def _enrich_items_with_costs(items: list[dict], currency: str = "EUR") -> tuple[
 
 
 def _build_shopping_items_rules(ingredient_names: list[str]) -> list[dict]:
+    # Build a deterministic shopping list when AI condensation is unavailable.
     rows = [{"source": name, "canonical": [_canonical_ingredient_name(name)]} for name in ingredient_names]
     return _aggregate_shopping_items(rows)
 
 
 def _build_shopping_items_openai(ingredient_names: list[str], openai_client, model: str) -> dict | None:
+    # Ask OpenAI to consolidate shopping items and return rough costs.
     try:
         completion = openai_client.chat.completions.create(
             model=model,
@@ -1300,6 +1336,7 @@ def _build_shopping_items_openai(ingredient_names: list[str], openai_client, mod
 
 
 def _build_shopping_list_items(meal_plan: MealPlan):
+    # Build shopping payload with OpenAI first and rules fallback.
     ingredient_names = _collect_plan_ingredient_names(meal_plan)
     if not ingredient_names:
         return {
@@ -1335,6 +1372,7 @@ def _build_shopping_list_items(meal_plan: MealPlan):
 
 
 def _normalize_shopping_payload(raw_items) -> dict:
+    # Normalize stored shopping payloads into a stable response shape.
     if isinstance(raw_items, dict):
         raw_list = raw_items.get("items")
         if isinstance(raw_list, list):
@@ -1369,6 +1407,7 @@ def _normalize_shopping_payload(raw_items) -> dict:
 
 
 def _shopping_response_payload(shopping: ShoppingList) -> dict:
+    # Build final shopping response and align totals with plan-level estimate.
     payload = _normalize_shopping_payload(shopping.items)
     cost_summary = payload.get("cost_summary")
     if not isinstance(cost_summary, dict):
@@ -1402,6 +1441,7 @@ def _shopping_response_payload(shopping: ShoppingList) -> dict:
 
 
 def _refresh_plan_completion(plan: MealPlan) -> MealPlan:
+    # Recompute completion state based on whether all plan items are rated.
     total_count = plan.items.count()
     rated_count = plan.items.filter(rating__isnull=False).count()
     is_completed = total_count > 0 and rated_count == total_count
@@ -1424,6 +1464,7 @@ class TagListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Return tag suggestions for include and exclude selectors.
         query = str(request.GET.get("q") or "").strip().lower()
         limit = _to_int(request.GET.get("limit"), 120)
         limit = max(10, min(limit, 300))
@@ -1450,6 +1491,7 @@ class IngredientPricingReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Return ingredient pricing coverage and distribution stats.
         limit = _to_int(request.GET.get("limit"), 10)
         limit = max(1, min(limit, 50))
 
@@ -1521,6 +1563,7 @@ class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        # Create a new account and issue JWT tokens.
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -1552,6 +1595,7 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        # Authenticate user credentials and issue JWT tokens.
         email = str(request.data.get("email") or "").lower().strip()
         password = str(request.data.get("password") or "")
 
@@ -1583,6 +1627,7 @@ class MeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Return current authenticated user summary.
         return Response(UserSummarySerializer(request.user).data)
 
 
@@ -1590,10 +1635,12 @@ class PreferenceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Return preference defaults for the active user.
         preference, _ = UserPreference.objects.get_or_create(user=request.user)
         return Response(UserPreferenceSerializer(preference).data)
 
     def put(self, request):
+        # Replace preference defaults for the active user.
         preference, _ = UserPreference.objects.get_or_create(user=request.user)
         serializer = UserPreferenceSerializer(preference, data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
@@ -1605,6 +1652,7 @@ class GenerateMealPlanView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
+        # Generate and persist a meal plan from prompt or manual criteria.
         input_mode = str(request.data.get("input_mode") or "prompt").strip().lower()
         if input_mode not in {"prompt", "manual"}:
             return Response({"error": "input_mode must be 'prompt' or 'manual'."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1737,6 +1785,7 @@ class MealPlanListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # List saved plans for the authenticated user.
         plans = MealPlan.objects.filter(user=request.user).prefetch_related("items")
         return Response(MealPlanListSerializer(plans, many=True).data)
 
@@ -1745,6 +1794,7 @@ class MealPlanDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, plan_id: int):
+        # Return one saved meal plan with recipe cards by position.
         plan = get_object_or_404(MealPlan.objects.filter(user=request.user).prefetch_related("items__recipe"), id=plan_id)
         data = MealPlanSerializer(plan).data
         recipe_map = {}
@@ -1754,6 +1804,7 @@ class MealPlanDetailView(APIView):
         return Response(data)
 
     def delete(self, request, plan_id: int):
+        # Delete one user-owned meal plan.
         plan = get_object_or_404(MealPlan, id=plan_id, user=request.user)
         plan.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -1763,6 +1814,7 @@ class SwapMealView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, plan_id: int):
+        # Replace one meal position with a new candidate from same constraints.
         plan = get_object_or_404(MealPlan.objects.filter(user=request.user).prefetch_related("items"), id=plan_id)
         serializer = SwapMealSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1797,6 +1849,7 @@ class RateMealView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, plan_id: int):
+        # Save per-meal rating and refresh completion status.
         plan = get_object_or_404(MealPlan.objects.filter(user=request.user).prefetch_related("items"), id=plan_id)
         serializer = RateMealSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1822,6 +1875,7 @@ class ShoppingListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, plan_id: int):
+        # Return an existing shopping list for a user-owned plan.
         plan = get_object_or_404(MealPlan, id=plan_id, user=request.user)
         shopping = ShoppingList.objects.filter(meal_plan=plan).first()
         if not shopping:
@@ -1829,6 +1883,7 @@ class ShoppingListView(APIView):
         return Response(_shopping_response_payload(shopping))
 
     def post(self, request, plan_id: int):
+        # Generate or refresh the shopping list for a user-owned plan.
         plan = get_object_or_404(MealPlan.objects.prefetch_related("items__recipe"), id=plan_id, user=request.user)
 
         items = _build_shopping_list_items(plan)

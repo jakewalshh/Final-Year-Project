@@ -21,6 +21,7 @@ import os
 
 
 def health(request):
+    # Expose a simple health endpoint for container probes.
     return JsonResponse({"status": "ok"})
 
 urlpatterns = [

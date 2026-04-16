@@ -2,6 +2,7 @@ from django.db import models
 
 
 class Recipe(models.Model):
+    # Stores core recipe content and imported nutrition metadata.
     # Legacy fields kept so the current frontend continues to work.
     name = models.CharField(max_length=200, db_index=True)
     ingredients = models.TextField(blank=True, default="")
@@ -30,6 +31,7 @@ class Recipe(models.Model):
 
 
 class Ingredient(models.Model):
+    # Stores normalized ingredient names and estimated unit costs.
     name = models.CharField(max_length=128, unique=True, db_index=True)
     estimated_unit_cost_eur = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
 
@@ -38,6 +40,7 @@ class Ingredient(models.Model):
 
 
 class Tag(models.Model):
+    # Stores normalized tag labels used for filtering.
     name = models.CharField(max_length=100, unique=True, db_index=True)
 
     def __str__(self):
@@ -45,6 +48,7 @@ class Tag(models.Model):
 
 
 class RecipeIngredient(models.Model):
+    # Links recipes to normalized ingredients with original position.
     recipe = models.ForeignKey(
         Recipe,
         on_delete=models.CASCADE,
@@ -74,6 +78,7 @@ class RecipeIngredient(models.Model):
 
 
 class RecipeStep(models.Model):
+    # Stores ordered instruction steps per recipe.
     recipe = models.ForeignKey(
         Recipe,
         on_delete=models.CASCADE,
@@ -99,6 +104,7 @@ class RecipeStep(models.Model):
 
 
 class RecipeTag(models.Model):
+    # Links recipes to normalized tag records.
     recipe = models.ForeignKey(
         Recipe,
         on_delete=models.CASCADE,

@@ -6,6 +6,7 @@ class Command(BaseCommand):
     help = "Promote a user to staff role (idempotent)."
 
     def add_arguments(self, parser):
+        # Allow staff promotion target to be passed from CLI.
         parser.add_argument(
             "--email",
             default="jake@jake.com",
@@ -13,6 +14,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # Promote one user to staff in an idempotent way.
         email = str(options.get("email") or "").strip().lower()
         if not email:
             self.stderr.write(self.style.ERROR("Email is required."))

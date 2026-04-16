@@ -3,6 +3,7 @@ from django.db import models
 
 
 class UserPreference(models.Model):
+    # Stores per-user planning defaults and exclusions.
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -20,6 +21,7 @@ class UserPreference(models.Model):
 
 
 class MealPlan(models.Model):
+    # Stores one generated meal plan and its parsed query metadata.
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -41,6 +43,7 @@ class MealPlan(models.Model):
 
 
 class MealPlanItem(models.Model):
+    # Stores one recipe slot inside a saved meal plan.
     meal_plan = models.ForeignKey(
         MealPlan,
         on_delete=models.CASCADE,
@@ -70,6 +73,7 @@ class MealPlanItem(models.Model):
 
 
 class ShoppingList(models.Model):
+    # Stores consolidated shopping payload for one meal plan.
     meal_plan = models.OneToOneField(
         MealPlan,
         on_delete=models.CASCADE,

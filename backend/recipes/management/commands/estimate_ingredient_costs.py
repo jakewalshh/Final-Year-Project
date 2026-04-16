@@ -17,6 +17,7 @@ class IngredientRow:
 
 
 def _chunked(values, size):
+    # Yield list chunks for batched estimation requests.
     for i in range(0, len(values), size):
         yield values[i : i + size]
 
@@ -37,6 +38,7 @@ class Command(BaseCommand):
         )
 
     def _estimate_batch(self, client, model: str, canonical_terms: list[str]) -> dict[str, float]:
+        # Request batched canonical ingredient prices from OpenAI.
         completion = client.chat.completions.create(
             model=model,
             response_format={"type": "json_object"},
@@ -90,6 +92,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _canonical_ingredient_name(raw_name: str) -> str:
+        # Convert raw ingredient text into a canonical key.
         patterns = [
             (r"\bchichken\b", "chicken"),
             (r"\bchicken\b", "chicken"),
@@ -148,6 +151,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _tokenize(name: str) -> list[str]:
+        # Tokenize ingredient names for rule-based fallback pricing.
         stop = {
             "fresh",
             "chopped",
@@ -181,6 +185,7 @@ class Command(BaseCommand):
         return [t for t in cleaned.split(" ") if t and t not in stop and len(t) > 2]
 
     def handle(self, *args, **options):
+        # Estimate and persist ingredient costs with AI or rules-only mode.
         model = str(options["model"]).strip()
         batch_size = max(10, int(options["batch_size"]))
         limit = int(options["limit"])
