@@ -1,32 +1,36 @@
-# Final-Year-Project
-### Welcome to my Panion Project
-## Jake Walsh : C22493266
 # Panion
 
-Panion is a smart meal planning app prototype.
+Final Year Project by Jake Walsh (`C22493266`).
 
-## Overview
+Panion is a meal planning web app that lets users generate recipe plans from either a natural language prompt or manual filters, then save and manage those plans through their account.
 
-The app takes a user meal request and returns matching recipes from the database.
+## What Panion Does
 
-Current functionality includes:
+- User signup and login with account-based data
+- Meal plan generation from:
+  - Prompt mode (chat-style request)
+  - Manual mode (structured filters)
+- Recipe filtering by ingredient, tags, time, nutrition, and budget cap
+- Saved plans with swap meal and delete actions
+- Meal completion and per-meal rating (1 to 5)
+- Shopping list generation from a saved plan
+- Rough budget estimation with clear warning metadata when constraints are too strict
 
-- Meal planning from natural-language prompts
-- Recipe search by filters like ingredient, tag, and time
-- Full recipe detail with ingredients and step-by-step instructions
-- Optional nutrition display in the frontend
+## Main Stack
 
-## Tech Stack
+- Frontend: React
+- Backend API: Django + Django REST Framework
+- Database: PostgreSQL
+- AI support: OpenAI (with rules-based fallback where needed)
+- Deployment: Docker, Azure Web App + Azure PostgreSQL
 
-- React frontend
-- Django backend API
-- PostgreSQL database
+## Project Structure
 
-## Data Model (High Level)
+- `frontend/` React UI
+- `backend/` Django API, planner logic, models, tests
+- `scripts/` helper scripts
+- `docker-compose.yml` local container orchestration
 
-- `Recipe`
-- `Ingredient`
-- `RecipeIngredient`
-- `RecipeStep`
-- `Tag`
-- `RecipeTag`
+## Notes
+
+Panion is designed as a practical planner, not a perfect nutrition or supermarket pricing engine. Cost and optimization outputs are intentionally rough planning guidance.
