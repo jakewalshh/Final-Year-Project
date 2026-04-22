@@ -1865,9 +1865,15 @@ class RateMealView(APIView):
         plan_item.save(update_fields=["rating", "feedback_note", "rated_at"])
 
         refreshed_plan = _refresh_plan_completion(plan)
-        payload = MealPlanSerializer(refreshed_plan).data
-        payload["rated_count"] = refreshed_plan.items.filter(rating__isnull=False).count()
-        payload["total_count"] = refreshed_plan.items.count()
+        # Re-load plan items after update to avoid stale prefetched ratings in the response.
+        fresh_plan = (
+            MealPlan.objects.filter(user=request.user)
+            .prefetch_related("items__recipe")
+            .get(id=refreshed_plan.id)
+        )
+        payload = MealPlanSerializer(fresh_plan).data
+        payload["rated_count"] = fresh_plan.items.filter(rating__isnull=False).count()
+        payload["total_count"] = fresh_plan.items.count()
         return Response(payload)
 
 

@@ -412,6 +412,12 @@ class PlannerApiTests(APITestCase):
                 format="json",
             )
             self.assertEqual(rate_resp.status_code, 200)
+            returned_item = next(
+                (row for row in rate_resp.data["items"] if int(row["position"]) == int(item["position"])),
+                None,
+            )
+            self.assertIsNotNone(returned_item)
+            self.assertEqual(int(returned_item["rating"]), 4)
 
         final_detail = self.client.get(reverse("meal-plan-detail", args=[plan_id]))
         self.assertEqual(final_detail.status_code, 200)
